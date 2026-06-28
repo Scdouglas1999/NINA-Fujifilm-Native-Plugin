@@ -4,10 +4,17 @@
 ![Platform](https://img.shields.io/badge/Platform-Windows_x64-blue?style=flat-square)
 ![License](https://img.shields.io/badge/License-Apache_2.0-green?style=flat-square)
 ![.NET](https://img.shields.io/badge/.NET-8.0-blue?style=flat-square)
+[![Support development](https://img.shields.io/badge/Support-Patreon-f96854?style=flat-square)](https://www.patreon.com/cw/SeanDouglas)
 
 A native camera integration plugin for [N.I.N.A. (Nighttime Imaging 'N' Astronomy)](https://nighttime-imaging.eu/) that enables direct USB communication with Fujifilm cameras. This plugin bypasses generic ASCOM drivers to interface directly with the camera firmware, providing features and performance not available through standard drivers.
 
 ---
+
+## Support Development
+
+This plugin is free to use and intended to stay that way. If it helps you run a Fujifilm camera in N.I.N.A., or you want to support continued compatibility work, you can optionally [support development on Patreon](https://www.patreon.com/cw/SeanDouglas).
+
+Patreon support helps with the unglamorous work that keeps camera plugins useful: testing real bodies and lenses, tracking Fujifilm SDK behavior, packaging installers, maintaining documentation, and fixing edge cases that only appear on specific rigs. There are no paid-only builds or locked features; support is appreciated, never required.
 
 ## Features
 
