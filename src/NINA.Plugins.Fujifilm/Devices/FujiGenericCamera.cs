@@ -12,6 +12,7 @@ using NINA.Equipment.Interfaces;
 using NINA.Equipment.Model;
 using NINA.Image.ImageData;
 using NINA.Image.Interfaces;
+using NINA.Plugins.Fujifilm.Imaging;
 using NINA.Profile.Interfaces;
 
 namespace NINA.Plugins.Fujifilm.Devices;
@@ -27,6 +28,7 @@ internal sealed class FujiGenericCamera : ICamera
     private readonly System.Timers.Timer _refreshTimer;
     private string _lensInfo = string.Empty;
     private int _lastBatteryLevel = -1;
+    private bool _lastHasBattery;
 
     public FujiGenericCamera(
         GenericCamera innerCamera,
@@ -60,7 +62,10 @@ internal sealed class FujiGenericCamera : ICamera
             _refreshTimer.Stop();
             _lensInfo = string.Empty;
             _lastBatteryLevel = -1;
+            _lastHasBattery = false;
             RaisePropertyChanged(nameof(Description));
+            RaisePropertyChanged(nameof(BatteryLevel));
+            RaisePropertyChanged(nameof(HasBattery));
         }
     }
 
@@ -83,6 +88,13 @@ internal sealed class FujiGenericCamera : ICamera
                 RaisePropertyChanged(nameof(BatteryLevel));
             }
 
+            var hasBattery = battery >= 0;
+            if (hasBattery != _lastHasBattery)
+            {
+                _lastHasBattery = hasBattery;
+                RaisePropertyChanged(nameof(HasBattery));
+            }
+
             // Get lens info from the camera's capabilities
             var caps = GetCapabilitiesSnapshot();
             var newLensInfo = caps?.Metadata?.LensProductName ?? string.Empty;
@@ -92,26 +104,15 @@ internal sealed class FujiGenericCamera : ICamera
                 RaisePropertyChanged(nameof(Description));
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Silently ignore errors during refresh
+            Logger.Warning($"Fujifilm camera status refresh failed: {ex.Message}");
         }
     }
 
     private FujiCameraCapabilities GetCapabilitiesSnapshot()
     {
-        // Access the capabilities through reflection or direct SDK call
-        // Since the SDK adapter doesn't expose this directly, we'll use the FujiCamera
-        try
-        {
-            var field = _sdkAdapter.GetType().GetField("_capabilities",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            return field?.GetValue(_sdkAdapter) as FujiCameraCapabilities;
-        }
-        catch
-        {
-            return null;
-        }
+        return _sdkAdapter.CurrentCapabilities;
     }
 
     public event PropertyChangedEventHandler PropertyChanged;
@@ -137,6 +138,7 @@ internal sealed class FujiGenericCamera : ICamera
 
     // Battery level - delegate to SDK adapter for fresh value
     public int BatteryLevel => Connected ? _sdkAdapter.GetBatteryLevel() : -1;
+    public bool HasBattery => Connected && BatteryLevel >= 0;
 
     // Delegate all other ICamera members to inner camera
     public string Id => _innerCamera.Id;
@@ -199,7 +201,6 @@ internal sealed class FujiGenericCamera : ICamera
     // Override to enable live view - our SDK adapter supports it
     public bool CanShowLiveView => true;
     public bool LiveViewEnabled { get => _innerCamera.LiveViewEnabled; set => _innerCamera.LiveViewEnabled = value; }
-    public bool HasBattery => true;
     public int BitDepth => _innerCamera.BitDepth;
     public IList<string> ReadoutModes => _innerCamera.ReadoutModes;
     public short ReadoutMode { get => _innerCamera.ReadoutMode; set => _innerCamera.ReadoutMode = value; }
@@ -219,7 +220,22 @@ internal sealed class FujiGenericCamera : ICamera
     public void StopExposure() => _innerCamera.StopExposure();
     public void AbortExposure() => _innerCamera.AbortExposure();
     public void StartExposure(CaptureSequence sequence) => _innerCamera.StartExposure(sequence);
-    public Task<IExposureData> DownloadExposure(CancellationToken token) => _innerCamera.DownloadExposure(token);
+    public async Task<IExposureData> DownloadExposure(CancellationToken token)
+    {
+        var exposure = await _innerCamera.DownloadExposure(token).ConfigureAwait(false);
+        if (exposure == null)
+        {
+            throw new InvalidOperationException(_sdkAdapter.LastExposureError ?? "N.I.N.A. did not receive image data from the Fujifilm camera.");
+        }
+
+        var package = _sdkAdapter.LastImagePackage;
+        if (package != null)
+        {
+            FujiMetadataHeaderWriter.Apply(exposure.MetaData, package.FitsKeywords);
+        }
+
+        return exposure;
+    }
     public void StartLiveView(CaptureSequence sequence) => _innerCamera.StartLiveView(sequence);
     public Task<IExposureData> DownloadLiveView(CancellationToken token) => _innerCamera.DownloadLiveView(token);
     public void StopLiveView() => _innerCamera.StopLiveView();

@@ -61,7 +61,7 @@ public partial class SettingsViewModel : ObservableObject
             var level = CameraCapabilities.Metadata.BatteryLevel;
             var status = CameraCapabilities.Metadata.BatteryStatus;
 
-            if (level > 0)
+            if (level >= 0)
                 return $"{level}% ({status})";
 
             return string.IsNullOrEmpty(status) ? "Unknown" : status;
@@ -149,6 +149,11 @@ public partial class SettingsViewModel : ObservableObject
                 ? "Body: (unknown)"
                 : $"Body: {metadata.ProductName}  FW: {metadata.FirmwareVersion}";
 
+            var identifiedModel = $"{metadata.ProductName} {SelectedCamera?.DisplayName}";
+            var compatibilitySummary = identifiedModel.Contains("X-T2", StringComparison.OrdinalIgnoreCase)
+                ? "Compatibility: Legacy/experimental (FF0002API); hardware validation required"
+                : "Compatibility: Configured Shooting SDK model";
+
             // Enhanced lens info
             string lensSummary;
             if (string.IsNullOrWhiteSpace(metadata.LensProductName))
@@ -174,11 +179,12 @@ public partial class SettingsViewModel : ObservableObject
                 : "Aperture: n/a";
 
             // Battery info
-            var batterySummary = metadata.BatteryLevel > 0
+            var batterySummary = metadata.BatteryLevel >= 0
                 ? $"Battery: {metadata.BatteryLevel}% ({metadata.BatteryStatus})"
                 : "Battery: n/a";
 
-            return $"Resolution: {resolutionSummary}\n" +
+            return $"{compatibilitySummary}\n" +
+                   $"Resolution: {resolutionSummary}\n" +
                    $"ISO Range: {isoSummary}\n" +
                    $"Exposure (Timed): {timedExposureSummary}\n" +
                    $"Exposure (Bulb): {bulbExposureSummary}\n" +

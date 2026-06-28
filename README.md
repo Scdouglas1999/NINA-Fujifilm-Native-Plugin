@@ -1,6 +1,6 @@
 # N.I.N.A. Fujifilm Native Plugin
 
-![N.I.N.A.](https://img.shields.io/badge/N.I.N.A.-3.0%2B-purple?style=flat-square)
+![N.I.N.A.](https://img.shields.io/badge/N.I.N.A.-3.2%2B-purple?style=flat-square)
 ![Platform](https://img.shields.io/badge/Platform-Windows_x64-blue?style=flat-square)
 ![License](https://img.shields.io/badge/License-Apache_2.0-green?style=flat-square)
 ![.NET](https://img.shields.io/badge/.NET-8.0-blue?style=flat-square)
@@ -17,7 +17,7 @@ A native camera integration plugin for [N.I.N.A. (Nighttime Imaging 'N' Astronom
 - **Full Exposure Control**: Supports timed exposures and bulb mode up to 60 minutes
 - **ISO Management**: Queries available ISO values from the camera and allows full programmatic control
 - **16-bit RAW Capture**: Captures full-resolution RAW images with complete sensor data
-- **Battery Monitoring**: Real-time battery level display in the camera equipment panel with automatic refresh
+- **Battery Monitoring**: Battery display on models whose SDK call layout has been verified
 - **Lens Detection**: Displays attached lens model, focal length, aperture, and OIS (optical image stabilization) status
 
 ### X-Trans Sensor Support
@@ -26,11 +26,11 @@ A native camera integration plugin for [N.I.N.A. (Nighttime Imaging 'N' Astronom
 - **Non-Destructive Processing**: Preview conversion does not affect saved images; original RAW data is preserved
 - **Correct Metadata**: Writes appropriate `BAYERPAT` and `ROWORDER` FITS headers for compatibility with PixInsight, Siril, and other stacking software
 
-### Electronic Lens Focuser
+### Experimental Electronic Lens Focuser
 
 - **Native Lens Control**: Exposes electronic Fujifilm lenses as focuser devices in N.I.N.A.
 - **Absolute Position Control**: Moves focus to specific positions within the lens mechanical range
-- **Autofocus Compatibility**: Works with N.I.N.A.'s autofocus routines for automated focusing with native Fuji lenses
+- **N.I.N.A. Focuser Interface**: Camera and focuser now share one reference-counted SDK session; autofocus behavior still needs physical lens validation
 - **Focus Range Detection**: Automatically queries lens focus limits (infinity to close focus)
 
 ### Configuration Options
@@ -38,30 +38,46 @@ A native camera integration plugin for [N.I.N.A. (Nighttime Imaging 'N' Astronom
 - **Demosaic Quality**: Selectable preview quality (Fast/Balanced/High Quality) to balance speed and image quality
 - **RAF Sidecar Export**: Optional saving of native Fujifilm RAF files alongside processed images
 - **Extended FITS Metadata**: Adds Fujifilm-specific metadata to FITS headers
-- **Focus Backlash Compensation**: Configurable backlash correction for precise focus control
-- **Camera Profiles**: Save and load configuration presets for different imaging scenarios
+- **Live View Tuning**: Selectable SDK image size and quality
 
 ---
 
-## Supported Cameras
+## Camera Compatibility
 
-The plugin supports Fujifilm cameras with USB tethering capability. Configuration files are included for the following models:
+The plugin uses Fujifilm's legacy native Shooting SDK runtime. Configuration files and model modules are present for:
 
 | Series | Models |
 | :--- | :--- |
-| **GFX (Medium Format)** | GFX100, GFX100S, GFX50S, GFX50R |
+| **GFX (Medium Format)** | GFX100RF, GFX100II, GFX100SII, GFX100S, GFX100, GFX50SII, GFX50S, GFX50R |
 | **X-H Series** | X-H2, X-H2S |
-| **X-T Series** | X-T5, X-T4, X-T3, X-T2 |
-| **X-S Series** | X-S20 |
+| **X-T Series** | X-T5, X-T4, X-T3 |
+| **X-S Series** | X-S20, X-S10 |
 | **Other** | X-Pro3, X-M5 |
+| **Legacy / Experimental** | X-T2 |
 
-**Note:** Older models without USB tethering protocol support (such as X-T1, X-E2, and earlier) are not compatible with this plugin.
+Fujifilm's current Camera Control SDK compatibility list also includes the GFX ETERNA 55 cinema camera. This plugin does not claim support for it because N.I.N.A. integration depends on the still-camera RAF capture/readout workflow, and that workflow has not been verified for ETERNA. It should remain hidden/unsupported here until a real camera and current SDK headers prove the required still-capture APIs behave like the X/GFX still bodies.
+
+### X-T2 status
+
+The X-T2 is a special case. Fujifilm's current public Camera Control SDK does not list it, but the legacy Shooting SDK distributed with earlier plugin releases contains `FF0002API.dll`, whose embedded module identity is `X-T2API.dll` (version 1.3.0.0).
+
+Static inspection confirms that module exports every core SDK entry point this plugin needs for discovery, connection, shutter/ISO control, timed and bulb release, RAW transfer, focus-position control, and live view. That makes basic operation technically plausible, not guaranteed: the path has not been validated here with physical X-T2 hardware.
+
+| X-T2 function | Plugin status |
+| :--- | :--- |
+| USB discovery and connection | Legacy SDK path available; hardware validation needed |
+| Timed/bulb capture and RAW download | Required SDK exports present; hardware validation needed |
+| Electronic-lens focus control | Required SDK exports present; shared-session implementation complete; lens/firmware and hardware validation still required |
+| Live view | Required SDK exports present; implementation complete but physical X-T2 validation still required |
+| Battery percentage | Disabled because the X-T2 variadic argument layout is not documented in the available headers |
+
+An installed X-T2 runtime must include `XAPI.dll`, `XSDK.DAT`, the transport DLLs, and `FF0002API.dll` beside the plugin assembly. Diagnostics now report this inventory explicitly. X-T2 firmware 1.10 introduced USB tethering; use current firmware where practical and select `USB AUTO` / `USB TETHER SHOOTING AUTO` before connecting.
 
 ---
 
 ## Requirements
 
-- **N.I.N.A. 3.0 or later**
+- **N.I.N.A. 3.2 or later**
 - **Windows x64**
 - **Visual C++ Redistributable (x64)**
 - **.NET 8.0 Runtime**
@@ -70,14 +86,10 @@ The plugin supports Fujifilm cameras with USB tethering capability. Configuratio
 
 ## Installation
 
-1. Download the latest release from the [Releases](../../releases) page
-2. Navigate to your N.I.N.A. plugins directory:
-   ```
-   %LOCALAPPDATA%\NINA\Plugins\3.0.0\
-   ```
-3. Create a folder named `Fujifilm`
-4. Extract the release contents into this folder
-5. Restart N.I.N.A.
+1. Download the latest installer from the [Releases](../../releases) page.
+2. Close N.I.N.A., run the installer, and restart N.I.N.A.
+
+For a manual installation, keep all release files together in the Fujifilm plugin directory. Do not move the `FF####API.dll` files into a subdirectory.
 
 ---
 
@@ -90,6 +102,7 @@ Configure your camera with the following settings for proper plugin operation:
 | Setting | Required Value | Purpose |
 | :--- | :--- | :--- |
 | **Connection Mode** | `USB TETHER SHOOTING AUTO` or `PC SHOOT AUTO` | Enables USB control |
+| **Image Quality** | `RAW` or `RAW+JPEG` | The plugin downloads RAF data and discards JPEG frames |
 | **Drive Dial** | `S` (Single Shot) | Prevents burst capture conflicts |
 | **Shutter Dial** | `T` (Time) or `A` (Auto) | Allows software shutter control |
 | **ISO Dial** | `A` (Auto) or `C` (Command) | Allows software ISO control |
@@ -111,13 +124,11 @@ Access plugin settings through **Options > Equipment > Camera > Fujifilm**.
 
 | Setting | Description | Default |
 | :--- | :--- | :--- |
-| **Force Manual Exposure Mode** | Ensures camera operates in Manual mode | Enabled |
-| **Force Manual Focus Mode** | Ensures lens operates in manual focus | Enabled |
 | **Bulb Release Delay** | Delay in milliseconds for bulb mode releases | 500ms |
-| **Save Native RAF Sidecar** | Saves original RAF file alongside processed images | Disabled |
+| **Save Native RAF Sidecar** | Saves original RAF file alongside processed images | Enabled |
 | **Extended FITS Metadata** | Adds Fujifilm metadata to FITS headers | Enabled |
 | **Demosaic Quality** | Preview processing quality (Fast/Balanced/High Quality) | Fast |
-| **Focus Backlash Steps** | Backlash compensation for focus operations | 0 |
+| **Live View Quality / Size** | Controls SDK live-view stream quality and dimensions | Normal / Large |
 
 ---
 
@@ -130,16 +141,18 @@ Access plugin settings through **Options > Equipment > Camera > Fujifilm**.
 | **Black & White Preview** | Debayering disabled | Enable **Debayer Image** in N.I.N.A. imaging options |
 | **Focus Timeout** | Lens in manual focus mode | Ensure lens focus switch is set to `S` or `C` (not pulled back to MF on clutch-type lenses) |
 | **Lens Not Detected** | Manual focus lens or adapter | Only electronic AF lenses are supported for focuser control |
-| **Battery Not Updating** | Normal behavior | Battery status refreshes every 30 seconds while connected |
+| **X-T2 Not Detected** | Missing legacy model module, camera mode, cable, or another tethering process | Verify `FF0002API.dll` is present; select `USB TETHER SHOOTING AUTO`; close X Acquire/other tethering software; reconnect and export diagnostics |
+| **Battery Unavailable** | Model-specific battery call is not verified | This is intentional on X-T2 and unknown models; use the camera display |
 
 ---
 
 ## Limitations
 
-- **No Live View**: Live view video streaming is not currently implemented
-> Live view support currently exists but is really bad. Currently runs around 17fps and the quality is really not good, consider it a proof of concept at best.
+- **Experimental Live View**: Streaming exists, but frame rate and image quality are limited by the current implementation and camera/SDK behavior
 - **No Binning**: Only full-frame capture is supported
 - **RAW Only**: Plugin captures RAW images; JPEG capture is not supported
+- **One Active Camera**: The SDK runtime and plugin session are process-global
+- **Legacy X-T2 Path**: The module exists and exposes the needed APIs, but support remains experimental until tested on physical hardware
 
 ---
 
@@ -149,16 +162,27 @@ Access plugin settings through **Options > Equipment > Camera > Fujifilm**.
 
 - Visual Studio 2022
 - .NET 8.0 SDK
-- Fujifilm X Acquire SDK (must be obtained from Fujifilm)
+- Fujifilm Shooting SDK x64 runtime (must be obtained separately; it is not committed to this repository)
 
 ### Build Steps
 
-1. Obtain the Fujifilm SDK and place the DLL files in `src/NINA.Plugins.Fujifilm/Interop/Native/`
-2. Open the solution in Visual Studio or build from command line:
+1. Extract the x64 SDK runtime to a local directory. It must contain `XAPI.dll`, `XSDK.DAT`, `FTLPTP.dll`, the transport DLLs, and the `FF####API.dll` model modules. X-T2 specifically requires `FF0002API.dll`.
+2. Open the solution in Visual Studio or build from the command line, passing that directory:
    ```powershell
-   dotnet build -c Release
+   dotnet build -c Release -p:FujifilmSdkDir="C:\path\to\FujifilmSdk"
    ```
-3. Output files will be in `src/NINA.Plugins.Fujifilm/bin/Release/net8.0-windows/`
+   The `FUJIFILM_SDK_DIR` environment variable can be used instead.
+3. The build copies the SDK runtime to the plugin output root. Release packaging fails if the core SDK or X-T2 model module is missing, preventing an unusable installer from being produced silently.
+
+### Tests
+
+The deterministic logic is covered by a platform-neutral xUnit project, so it can run without N.I.N.A., WPF, a Fujifilm SDK installation, or camera hardware:
+
+```powershell
+dotnet test tests/NINA.Plugins.Fujifilm.Tests/NINA.Plugins.Fujifilm.Tests.csproj -c Release
+```
+
+The suite covers model matching and all shipped configurations, safe X-T2/GFX100RF battery handling, shutter selection, settings normalization, shared-session ownership, metadata typing, active-area crop validation, and X-Trans-to-RGGB conversion. Native SDK behavior still requires the hardware smoke tests described in the X-T2 status section.
 
 ---
 

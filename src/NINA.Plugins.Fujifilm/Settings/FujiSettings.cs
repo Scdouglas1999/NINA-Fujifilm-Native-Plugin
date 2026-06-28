@@ -1,4 +1,4 @@
-using NINA.Plugins.Fujifilm.Devices;
+using System;
 using NINA.Plugins.Fujifilm.Devices.LiveView;
 
 namespace NINA.Plugins.Fujifilm.Settings;
@@ -30,13 +30,7 @@ public enum DemosaicQuality
 
 public sealed class FujiSettings
 {
-    public string PreferredCameraId { get; set; } = string.Empty;
-    public bool EnableSdkTrace { get; set; }
-    public bool ForceManualExposureMode { get; set; } = true;
-    public bool ForceManualFocusMode { get; set; } = true;
     public int BulbReleaseDelayMs { get; set; } = 500;
-    public bool AutoDeleteNonRaw { get; set; } = true;
-    public int FocusBacklashSteps { get; set; } = 0;
     
     /// <summary>
     /// Whether to save native RAF files alongside NINA's image files.
@@ -58,12 +52,6 @@ public sealed class FujiSettings
     public DemosaicQuality PreviewDemosaicQuality { get; set; } = DemosaicQuality.Fast;
 
     /// <summary>
-    /// Drive/bracketing mode to use for captures.
-    /// Default is Single Shot (Off) for normal astrophotography.
-    /// </summary>
-    public BracketingMode DriveMode { get; set; } = BracketingMode.Off;
-
-    /// <summary>
     /// Live view image quality setting.
     /// Default is Normal for balanced speed and quality.
     /// </summary>
@@ -74,4 +62,21 @@ public sealed class FujiSettings
     /// Default is Large (1280px) for best preview detail.
     /// </summary>
     public LiveViewSize LiveViewSize { get; set; } = LiveViewSize.Large;
+
+    public void Normalize()
+    {
+        BulbReleaseDelayMs = Math.Clamp(BulbReleaseDelayMs, 0, 5000);
+        if (!Enum.IsDefined(typeof(DemosaicQuality), PreviewDemosaicQuality))
+        {
+            PreviewDemosaicQuality = DemosaicQuality.Fast;
+        }
+        if (!Enum.IsDefined(typeof(global::NINA.Plugins.Fujifilm.Devices.LiveView.LiveViewQuality), LiveViewQuality))
+        {
+            LiveViewQuality = global::NINA.Plugins.Fujifilm.Devices.LiveView.LiveViewQuality.Normal;
+        }
+        if (!Enum.IsDefined(typeof(global::NINA.Plugins.Fujifilm.Devices.LiveView.LiveViewSize), LiveViewSize))
+        {
+            LiveViewSize = global::NINA.Plugins.Fujifilm.Devices.LiveView.LiveViewSize.Large;
+        }
+    }
 }

@@ -41,6 +41,7 @@ namespace NINA.Plugins.Fujifilm.Devices;
             } 
             catch (Exception ex)
             {
+                Logger.Error($"Fujifilm camera discovery failed: {ex}");
                 return new List<ICamera>();
             }
         }

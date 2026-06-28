@@ -1,13 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
-using System.Linq;
-using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using NINA.Equipment.Equipment.MyCamera;
 using NINA.Equipment.Interfaces;
 using NINA.Image.Interfaces;
+using NINA.Plugins.Fujifilm.Configuration;
 using NINA.Plugins.Fujifilm.Configuration.Loading;
 using NINA.Plugins.Fujifilm.Devices.LiveView;
 using NINA.Plugins.Fujifilm.Diagnostics;
@@ -25,7 +24,6 @@ public sealed class FujiCameraFactory : IFujiCameraFactory
     private readonly IFujifilmDiagnosticsService _diagnostics;
     private readonly FujiCamera _camera;
     private readonly ILibRawAdapter _libRaw;
-    private readonly ICameraModelCatalog _catalog;
     private readonly IProfileService _profileService;
     private readonly IExposureDataFactory _exposureDataFactory;
     private readonly IFujiSettingsProvider _settingsProvider;
@@ -38,7 +36,6 @@ public sealed class FujiCameraFactory : IFujiCameraFactory
         FujiCamera camera,
         ILibRawAdapter libRaw,
         IFujiSettingsProvider settingsProvider,
-        ICameraModelCatalog catalog,
         IProfileService profileService,
         IExposureDataFactory exposureDataFactory,
         ExportFactory<ILiveViewService> liveViewServiceFactory
@@ -49,7 +46,6 @@ public sealed class FujiCameraFactory : IFujiCameraFactory
         _camera = camera;
         _libRaw = libRaw;
         _settingsProvider = settingsProvider;
-        _catalog = catalog;
         _profileService = profileService;
         _exposureDataFactory = exposureDataFactory;
         _liveViewServiceFactory = liveViewServiceFactory;
@@ -57,23 +53,21 @@ public sealed class FujiCameraFactory : IFujiCameraFactory
 
     public async Task<IReadOnlyList<FujifilmCameraDescriptor>> GetAvailableCamerasAsync(CancellationToken cancellationToken)
     {
-        try
-        {
-            var cameras = await _interop.DetectCamerasAsync(cancellationToken).ConfigureAwait(false);
-            
-            var descriptors = new List<FujifilmCameraDescriptor>();
+        var cameras = await _interop.DetectCamerasAsync(cancellationToken).ConfigureAwait(false);
+        var descriptors = new List<FujifilmCameraDescriptor>();
 
-            foreach (var info in cameras)
+        foreach (var info in cameras)
+        {
+            if (CameraModelRules.IsKnownUnsupportedStillCamera(info.ProductName))
             {
-                descriptors.Add(new FujifilmCameraDescriptor(info.ProductName, info.DeviceId));
+                _diagnostics.RecordEvent("Factory", $"Skipping unsupported Fujifilm SDK device '{info.ProductName}'. The plugin only supports still-camera RAF capture workflows.");
+                continue;
             }
 
-            return descriptors;
+            descriptors.Add(new FujifilmCameraDescriptor(info.ProductName, info.DeviceId));
         }
-        catch (Exception ex)
-        {
-            throw;
-        }
+
+        return descriptors;
     }
 
     public FujiCamera CreateCamera()
@@ -83,21 +77,8 @@ public sealed class FujiCameraFactory : IFujiCameraFactory
 
     public ICamera CreateGenericCamera(FujifilmCameraDescriptor descriptor)
     {
-        // We need to manage lifetimes for the camera and libraw adapter
-        // Since this factory is Shared, but the adapter is transient/per-connection
-        // We'll use the factory's injected instances but we need to be careful about disposal.
-
-        // In a proper DI setup, we might want to use a child container or factory delegate.
-        // For now, we pass the shared instances. The Adapter should NOT dispose the shared _camera instance
-        // if it's meant to be reused, but here _camera is NonShared in the container?
-        // Wait, FujiCamera is NonShared in its export.
-        // But Factory is [PartCreationPolicy(CreationPolicy.Shared)]
-        // So _camera is captured once. This means we can only use one camera instance.
-        // That's probably fine for now.
-
-        // We create a new adapter for each connection attempt/equipment item.
-        // We pass 'Empty' disposables because we don't want the adapter to dispose our shared services.
-        // Create a new LiveViewService instance for this adapter
+        // The Fujifilm SDK is process-global and the plugin supports one active camera session.
+        // Each NINA adapter gets an independent live-view service while sharing that session.
         var liveViewExport = _liveViewServiceFactory.CreateExport();
         var liveViewService = liveViewExport.Value;
 
@@ -117,7 +98,7 @@ public sealed class FujiCameraFactory : IFujiCameraFactory
             descriptor.DisplayName,  // Camera name
             descriptor.DisplayName,  // Camera ID/description
             "Fujifilm Camera Plugin",
-            "2.4.9",
+            "3.0.2",
             true,  // hasBattery = true so NINA shows battery in equipment panel
             sdkAdapter,
             _profileService,
@@ -129,36 +110,29 @@ public sealed class FujiCameraFactory : IFujiCameraFactory
 
     public async Task<FujiCameraCapabilities> GetCapabilitiesAsync(FujifilmCameraDescriptor descriptor, CancellationToken cancellationToken)
     {
-        // This might require connecting to the camera to get capabilities if not already cached.
-        // For now, we can return empty or try to connect briefly.
-        // Given the architecture, we might just return what we know or throw if not connected.
-        // But NINA might call this before connection?
-        // Actually, this method isn't standard in ICameraFactory, it seems custom to IFujiCameraFactory.
-        // We'll implement it by delegating to the camera if connected, or connecting briefly.
-        
         if (_camera.IsConnected)
         {
+            if (!string.Equals(_camera.ConnectedDeviceId, descriptor.DeviceId, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"Capabilities cannot be loaded for {descriptor.DisplayName} while another Fujifilm camera is connected.");
+            }
+
             return _camera.GetCapabilitiesSnapshot();
         }
-        
-        return new FujiCameraCapabilities(
-            Array.AsReadOnly(new int[0]), 
-            0, 
-            0, 
-            0, 
-            false, 
-            0, 
-            0, 
-            0, 
-            0, 
-            0, 
-            0, 
-            0, 
-            0, 
-            0,
-            FujiCameraMetadata.Empty,
-            0,
-            0);
+
+        try
+        {
+            await _camera.ConnectAsync(descriptor, cancellationToken).ConfigureAwait(false);
+            return _camera.GetCapabilitiesSnapshot();
+        }
+        finally
+        {
+            if (_camera.IsConnected)
+            {
+                await _camera.DisconnectAsync().ConfigureAwait(false);
+            }
+        }
     }
 
     private class Disposable : IDisposable

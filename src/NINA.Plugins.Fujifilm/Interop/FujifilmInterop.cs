@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
+using System.IO;
+using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using NINA.Plugins.Fujifilm.Diagnostics;
@@ -12,6 +15,9 @@ namespace NINA.Plugins.Fujifilm.Interop;
 [PartCreationPolicy(CreationPolicy.Shared)]
 public sealed class FujifilmInterop : IFujifilmInterop
 {
+    private const int DetectionAttempts = 4;
+    private const int DetectionRetryDelayMilliseconds = 500;
+
     private readonly IFujifilmDiagnosticsService _diagnostics;
     private static readonly SemaphoreSlim _globalLock = new(1, 1);
     private static readonly SemaphoreSlim _detectionLock = new(1, 1); // Serialize detection operations
@@ -34,6 +40,7 @@ public sealed class FujifilmInterop : IFujifilmInterop
             }
 
             _diagnostics.RecordEvent("Interop", "Initializing Fujifilm SDK runtime");
+            LogRuntimeInventory();
             try 
             {
                 var initResult = FujifilmSdkWrapper.XSDK_Init(IntPtr.Zero);
@@ -45,11 +52,42 @@ public sealed class FujifilmInterop : IFujifilmInterop
                 _diagnostics.RecordEvent("Interop", "SDK returned 0x1004 (Already Initialized) during Init. Treating as success.");
                 _isSdkInitializedGlobally = true;
             }
+            catch (DllNotFoundException ex)
+            {
+                throw new InvalidOperationException(
+                    "Fujifilm Shooting SDK runtime not found. Reinstall the plugin and verify that XAPI.dll, XSDK.DAT, FTLPTP.dll, and the FF####API.dll model modules are beside the plugin DLL.",
+                    ex);
+            }
+            catch (BadImageFormatException ex)
+            {
+                throw new InvalidOperationException(
+                    "The Fujifilm Shooting SDK runtime has the wrong architecture. This plugin requires the 64-bit SDK files.",
+                    ex);
+            }
         }
         finally
         {
             _globalLock.Release();
         }
+    }
+
+    private void LogRuntimeInventory()
+    {
+        var pluginDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? string.Empty;
+        _diagnostics.RecordEvent("Interop", $"Plugin runtime directory: {pluginDirectory}");
+
+        foreach (var fileName in new[] { "XAPI.dll", "XSDK.DAT", "FTLPTP.dll", "FTLPTPIP.dll" })
+        {
+            var path = Path.Combine(pluginDirectory, fileName);
+            _diagnostics.RecordEvent("Interop", $"Runtime file {fileName}: {(File.Exists(path) ? "present" : "missing")}");
+        }
+
+        var modelModules = Directory.Exists(pluginDirectory)
+            ? Directory.GetFiles(pluginDirectory, "FF????API.dll").Select(Path.GetFileName).OrderBy(name => name).ToArray()
+            : Array.Empty<string>();
+        _diagnostics.RecordEvent("Interop", modelModules.Length == 0
+            ? "No Fujifilm camera model modules were found. X-T2 requires FF0002API.dll."
+            : $"Fujifilm camera model modules ({modelModules.Length}): {string.Join(", ", modelModules)}");
     }
 
     public async Task ShutdownAsync()
@@ -90,9 +128,31 @@ public sealed class FujifilmInterop : IFujifilmInterop
             // Add a small delay to allow any previous operations to complete
             await Task.Delay(100, cancellationToken).ConfigureAwait(false);
         
-        int count;
-        var detectResult = FujifilmSdkWrapper.XSDK_Detect(FujifilmSdkWrapper.XSDK_DSC_IF_USB, IntPtr.Zero, IntPtr.Zero, out count);
-        FujifilmSdkWrapper.CheckResult(IntPtr.Zero, detectResult, nameof(FujifilmSdkWrapper.XSDK_Detect));
+        var count = 0;
+        for (var attempt = 1; attempt <= DetectionAttempts; attempt++)
+        {
+            var detectResult = FujifilmSdkWrapper.XSDK_Detect(
+                FujifilmSdkWrapper.XSDK_DSC_IF_USB,
+                IntPtr.Zero,
+                IntPtr.Zero,
+                out count);
+
+            FujifilmSdkWrapper.CheckResult(
+                IntPtr.Zero,
+                detectResult,
+                nameof(FujifilmSdkWrapper.XSDK_Detect));
+
+            if (count > 0 || attempt == DetectionAttempts)
+            {
+                break;
+            }
+
+            var retryDelay = DetectionRetryDelayMilliseconds * attempt;
+            _diagnostics.RecordEvent(
+                "Interop",
+                $"No cameras found on detection attempt {attempt}/{DetectionAttempts}; retrying in {retryDelay}ms");
+            await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
+        }
 
         if (count <= 0)
         {
@@ -380,15 +440,7 @@ public sealed class FujifilmInterop : IFujifilmInterop
         return Task.FromResult(sensitivity);
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        // Do not shut down SDK on dispose, as other instances might be using it.
-        // Or, we should ref count? For now, let's keep it simple and NOT shut down on dispose
-        // to avoid killing the session for others. 
-        // Actually, if we are a singleton, DisposeAsync is called on app exit.
-        // But we saw multiple instances.
-        // Let's just do nothing here for now to be safe, or only Shutdown if we are sure.
-        // Given the crash, let's avoid aggressive shutdown.
-        await Task.CompletedTask;
-    }
+    // The SDK lifetime is process-global. Explicit sessions close their camera handles;
+    // shutting the runtime down here could invalidate another exported adapter.
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }

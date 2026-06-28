@@ -67,7 +67,7 @@ public class FujiFocuserSdkAdapter : IFocuser, INotifyPropertyChanged
     }
 
     public string DriverInfo => "Fujifilm Native Driver";
-    public string DriverVersion => "2.4.9";
+    public string DriverVersion => "3.0.2";
     public int InterfaceVersion => 1;
 
     public bool Absolute => true;
@@ -130,6 +130,7 @@ public class FujiFocuserSdkAdapter : IFocuser, INotifyPropertyChanged
         catch (Exception ex)
         {
             _diagnostics.RecordEvent("FocuserAdapter", $"Connection failed: {ex.Message}");
+            await _focuser.DisposeAsync().ConfigureAwait(false);
             throw;
         }
     }
@@ -156,18 +157,23 @@ public class FujiFocuserSdkAdapter : IFocuser, INotifyPropertyChanged
 
     public async Task Move(int position, CancellationToken token, int timeout)
     {
-        if (!_connected) return;
+        if (!_connected)
+        {
+            throw new InvalidOperationException("Focuser is not connected.");
+        }
         
         IsMoving = true;
         try
         {
-            await _focuser.MoveAsync(position, token).ConfigureAwait(false);
+            var effectiveTimeout = timeout > 0 ? TimeSpan.FromMilliseconds(timeout) : TimeSpan.FromSeconds(30);
+            await _focuser.MoveAsync(position, token, effectiveTimeout).ConfigureAwait(false);
             var newPos = await _focuser.GetPositionAsync(token).ConfigureAwait(false);
             Position = newPos;
         }
         catch (Exception ex)
         {
             _diagnostics.RecordEvent("FocuserAdapter", $"Move failed: {ex.Message}");
+            throw;
         }
         finally
         {

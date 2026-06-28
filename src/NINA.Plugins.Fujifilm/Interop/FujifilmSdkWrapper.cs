@@ -76,8 +76,8 @@ internal static class FujifilmSdkWrapper
     public const int API_CODE_CheckBatteryInfo = 0x4055;
 
     // Battery API parameter values - model specific:
-    // Newer models (X-T5, X-H2, X-H2S, X-S20, X-M5, GFX100II, GFX100SII): param = 8
-    // Older models (X-T3, X-T4, X-S10, X-Pro3, GFX50S, GFX50R, GFX100S, GFX50SII): param = 6
+    // Confirmed 8-output models include X-T5, X-H2/H2S, X-S20, X-M5, and GFX100 variants.
+    // Confirmed 6-output models include X-T3/T4, X-S10, X-Pro3, GFX50S/50R/50SII.
     // The param value represents the number of output values the API supports
     // For body battery info/ratio, we try param 1 first, then model-specific values
     public const int API_PARAM_CheckBatteryInfo_Body = 1;        // Body battery info (status code)
@@ -100,22 +100,6 @@ internal static class FujifilmSdkWrapper
     public const int SDK_POWERCAPACITY_100 = 0x000C;        // 100%
     public const int SDK_POWERCAPACITY_DC_CHARGE = 0x000D;  // Charging via DC
     public const int SDK_POWERCAPACITY_DC = 0x00FF;         // Powered by DC adapter
-
-    // ========== Drive Mode API Codes (from XAPI.h lines 238-240) ==========
-    public const int API_CODE_SetDriveMode = 0x1377;
-    public const int API_CODE_GetDriveMode = 0x1378;
-    public const int API_CODE_CapDriveMode = 0x1379;
-    public const int API_PARAM_DriveMode = 1;
-
-    // ========== Drive Mode Constants (from XAPI.h lines 2107-2124) ==========
-    public const int XSDK_DRIVE_MODE_S = 0x0001;           // Single shot
-    public const int XSDK_DRIVE_MODE_CL = 0x0002;          // Continuous Low
-    public const int XSDK_DRIVE_MODE_CH = 0x0003;          // Continuous High
-    public const int XSDK_DRIVE_MODE_BOOST = 0x0004;       // Continuous Boost
-    public const int XSDK_DRIVE_MODE_BKT_AE = 0x000A;      // Auto Exposure Bracketing
-    public const int XSDK_DRIVE_MODE_BKT_ISO = 0x000B;     // ISO Bracketing
-    public const int XSDK_DRIVE_MODE_BKT_DYNAMICRANGE = 0x000E;  // Dynamic Range Bracketing
-    public const int XSDK_DRIVE_MODE_BKT_FOCUS = 0x000F;   // Focus Bracketing
 
     // ========== Lens Position/Zoom API Codes (from XAPI.h) ==========
     public const int API_CODE_CapLensZoomPos = 0x1321;
@@ -195,12 +179,6 @@ internal static class FujifilmSdkWrapper
     [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetMode")]
     public static extern int XSDK_GetMode(IntPtr hCamera, out int plMode);
 
-    [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_SetImageQuality")]
-    public static extern int XSDK_SetImageQuality(IntPtr hCamera, int lImageQuality);
-
-    [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_SetRAWCompression")]
-    public static extern int XSDK_SetRAWCompression(IntPtr hCamera, int lRawCompression);
-
     [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_SetAEMode")]
     public static extern int XSDK_SetAEMode(IntPtr hCamera, int lAEMode);
 
@@ -232,7 +210,6 @@ internal static class FujifilmSdkWrapper
     // Helper methods wrapping generic property functions
     public static int XSDK_CapFocusPos(IntPtr hCamera, out XSDK_FOCUS_POS_CAP focusPosCap)
     {
-        int num = 0;
         int size = Marshal.SizeOf<XSDK_FOCUS_POS_CAP>();
         IntPtr pFocusPosCap = Marshal.AllocHGlobal(size);
         
@@ -264,10 +241,7 @@ internal static class FujifilmSdkWrapper
 
     public static int XSDK_GetFocusPos(IntPtr hCamera, out int plFocusPos)
     {
-        long val;
-        int result = XSDK_GetProp(hCamera, XSDK_API_CODE_GetFocusPos, XSDK_API_PARAM_GetFocusPos, out val);
-        plFocusPos = (int)val;
-        return result;
+        return XSDK_GetProp(hCamera, XSDK_API_CODE_GetFocusPos, XSDK_API_PARAM_GetFocusPos, out plFocusPos);
     }
 
     public static int XSDK_SetFocusPos(IntPtr hCamera, int lFocusPos)
@@ -303,12 +277,6 @@ internal static class FujifilmSdkWrapper
     [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetImageSize")]
     public static extern int XSDK_GetImageSize(IntPtr hCamera, out int plImageSize);
 
-    // Image Size Constants (Generic/Common)
-    // The actual values depend on the camera generation, but we can define common ones or handle raw ints.
-    // For GFX100S:
-    // L 4:3 is what we mostly care about.
-    // We will pass the raw int to CameraSpecs and handle it there.
-
     [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetErrorNumber")]
     public static extern int XSDK_GetErrorNumber(IntPtr hCamera, out int plAPICode, out int plERRCode);
 
@@ -317,40 +285,38 @@ internal static class FujifilmSdkWrapper
     public static extern int XSDK_CapProp(IntPtr hCamera, int lAPICode, int lAPIParam, out int plNum, IntPtr plValues);
 
     [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_SetProp")]
-    public static extern int XSDK_SetProp(IntPtr hCamera, int lAPICode, int lAPIParam, long lValue);
+    public static extern int XSDK_SetProp(IntPtr hCamera, int lAPICode, int lAPIParam, int lValue);
 
     [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetProp")]
-    public static extern int XSDK_GetProp(IntPtr hCamera, int lAPICode, int lAPIParam, out long plValue);
+    public static extern int XSDK_GetProp(IntPtr hCamera, int lAPICode, int lAPIParam, out int plValue);
 
-    // Battery Info overload for newer models (X-T5, X-H2, X-H2S, X-S20, X-M5, GFX100II, GFX100SII)
-    // These models require 8 output parameters
+    // Battery Info overload for models whose headers specify 8 output parameters.
     [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetProp")]
     public static extern int XSDK_GetProp_Battery8(
         IntPtr hCamera,
         int lAPICode,
         int lAPIParam,
-        out long plBodyBatteryInfo,
-        out long plGripBatteryInfo,
-        out long plGripBattery2Info,
-        out long plBodyBatteryRatio,
-        out long plGripBatteryRatio,
-        out long plGripBattery2Ratio,
-        out long plBodyBattery2Info,
-        out long plBodyBattery2Ratio2);
+        out int plBodyBatteryInfo,
+        out int plGripBatteryInfo,
+        out int plGripBattery2Info,
+        out int plBodyBatteryRatio,
+        out int plGripBatteryRatio,
+        out int plGripBattery2Ratio,
+        out int plBodyBattery2Info,
+        out int plBodyBattery2Ratio2);
 
-    // Battery Info overload for older models (X-T3, X-T4, X-S10, X-Pro3, GFX50S, GFX50R, GFX100S, GFX50SII)
-    // These models require 6 output parameters
+    // Battery Info overload for models whose headers specify 6 output parameters.
     [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetProp")]
     public static extern int XSDK_GetProp_Battery6(
         IntPtr hCamera,
         int lAPICode,
         int lAPIParam,
-        out long plBodyBatteryInfo,
-        out long plGripBatteryInfo,
-        out long plGripBattery2Info,
-        out long plBodyBatteryRatio,
-        out long plGripBatteryRatio,
-        out long plGripBattery2Ratio);
+        out int plBodyBatteryInfo,
+        out int plGripBatteryInfo,
+        out int plGripBattery2Info,
+        out int plBodyBatteryRatio,
+        out int plGripBatteryRatio,
+        out int plGripBattery2Ratio);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
     public struct XSDK_DeviceInformation

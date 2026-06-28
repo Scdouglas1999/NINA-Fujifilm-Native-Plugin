@@ -17,15 +17,13 @@ public interface IFujiFocuserFactory
 public sealed class FujiFocuserFactory : IFujiFocuserFactory
 {
     private readonly ICameraModelCatalog _catalog;
-    private readonly IFujifilmInterop _interop;
     private readonly IFujifilmDiagnosticsService _diagnostics;
     private readonly ExportFactory<FujiFocuser> _focuserFactory;
 
     [ImportingConstructor]
-    public FujiFocuserFactory(ICameraModelCatalog catalog, IFujifilmInterop interop, IFujifilmDiagnosticsService diagnostics, ExportFactory<FujiFocuser> focuserFactory)
+    public FujiFocuserFactory(ICameraModelCatalog catalog, IFujifilmDiagnosticsService diagnostics, ExportFactory<FujiFocuser> focuserFactory)
     {
         _catalog = catalog;
-        _interop = interop;
         _diagnostics = diagnostics;
         _focuserFactory = focuserFactory;
     }

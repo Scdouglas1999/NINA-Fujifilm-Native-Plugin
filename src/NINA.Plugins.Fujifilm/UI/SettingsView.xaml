@@ -4,6 +4,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:local="clr-namespace:NINA.Plugins.Fujifilm.Settings"
+             xmlns:liveView="clr-namespace:NINA.Plugins.Fujifilm.Devices.LiveView"
              mc:Ignorable="d"
              d:DesignWidth="500"
              d:DesignHeight="600">
@@ -79,16 +80,6 @@
             <!-- Exposure Settings -->
             <TextBlock Text="Exposure" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8" />
             <StackPanel Margin="0,0,0,24">
-                <!-- Checkbox with clear label alignment -->
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                    <CheckBox IsChecked="{Binding Settings.ForceManualExposureMode, Mode=TwoWay}" 
-                              VerticalAlignment="Center"
-                              Margin="0,0,8,0" />
-                    <TextBlock Text="Force Manual Exposure Mode" 
-                               VerticalAlignment="Center" />
-                </StackPanel>
-                
-                <!-- Input field with label -->
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
@@ -171,45 +162,41 @@
                 </TextBlock>
             </StackPanel>
 
-            <!-- Focus Settings -->
-            <TextBlock Text="Focus" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8" />
+            <TextBlock Text="Live View" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8" />
             <StackPanel Margin="0,0,0,24">
-                <!-- Checkbox with clear label alignment -->
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                    <CheckBox IsChecked="{Binding Settings.ForceManualFocusMode, Mode=TwoWay}"
-                              VerticalAlignment="Center"
-                              Margin="0,0,8,0" />
-                    <TextBlock Text="Force Manual Focus Mode"
-                               VerticalAlignment="Center" />
-                </StackPanel>
-
-                <!-- Input field with label -->
+                <Grid Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Image quality:" VerticalAlignment="Center" Margin="0,0,12,0" />
+                    <ComboBox Grid.Column="1" Width="140" HorizontalAlignment="Left"
+                              SelectedValue="{Binding Settings.LiveViewQuality, Mode=TwoWay}"
+                              SelectedValuePath="Tag">
+                        <ComboBoxItem Content="Fine" Tag="{x:Static liveView:LiveViewQuality.Fine}" />
+                        <ComboBoxItem Content="Normal" Tag="{x:Static liveView:LiveViewQuality.Normal}" />
+                        <ComboBoxItem Content="Basic" Tag="{x:Static liveView:LiveViewQuality.Basic}" />
+                    </ComboBox>
+                </Grid>
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="Focus Backlash Steps:"
-                               VerticalAlignment="Center"
-                               Margin="0,0,12,0" />
-                    <TextBox Grid.Column="1"
-                             Width="100"
-                             HorizontalAlignment="Left"
-                             Text="{Binding Settings.FocusBacklashSteps, Mode=TwoWay}" />
+                    <TextBlock Text="Image size:" VerticalAlignment="Center" Margin="0,0,12,0" />
+                    <ComboBox Grid.Column="1" Width="140" HorizontalAlignment="Left"
+                              SelectedValue="{Binding Settings.LiveViewSize, Mode=TwoWay}"
+                              SelectedValuePath="Tag">
+                        <ComboBoxItem Content="Large (1280px)" Tag="{x:Static liveView:LiveViewSize.Large}" />
+                        <ComboBoxItem Content="Medium (800px)" Tag="{x:Static liveView:LiveViewSize.Medium}" />
+                        <ComboBoxItem Content="Small (640px)" Tag="{x:Static liveView:LiveViewSize.Small}" />
+                    </ComboBox>
                 </Grid>
             </StackPanel>
 
             <!-- Advanced Settings (Collapsible) -->
             <Expander Header="Advanced" Margin="0,0,0,20" IsExpanded="False">
                 <StackPanel Margin="0,12,0,0">
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-                        <CheckBox IsChecked="{Binding Settings.EnableSdkTrace, Mode=TwoWay}" 
-                                  VerticalAlignment="Center"
-                                  Margin="0,0,8,0" />
-                        <TextBlock Text="Enable SDK Trace (for debugging)" 
-                                   VerticalAlignment="Center" />
-                    </StackPanel>
-                    
                     <TextBlock Text="Camera Discovery" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,8" />
                     <Button Content="Refresh Cameras" 
                             Width="140" 

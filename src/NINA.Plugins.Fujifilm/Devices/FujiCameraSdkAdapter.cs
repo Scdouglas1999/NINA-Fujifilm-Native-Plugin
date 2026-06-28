@@ -8,7 +8,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using NINA.Core.Enum;
-﻿using NINA.Core.Utility;
+using NINA.Core.Utility;
 using NINA.Equipment.Interfaces;
 using NINA.Equipment.Interfaces.ViewModel;
 using NINA.Image.Interfaces;
@@ -56,8 +56,10 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
     private int _roiBin = 1;
     private bool _disposed;
     private DateTime _lastExposureStartUtc = DateTime.MinValue;
+    private DateTime _lastStatusRefreshUtc = DateTime.MinValue;
     private FujiCameraCapabilities _capabilities = FujiCameraCapabilities.Empty;
     private FujiImagePackage? _lastImagePackage;
+    private string? _lastExposureError;
 
     private readonly IProfileService _profileService;
 
@@ -68,7 +70,6 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
     private int _liveViewWidth;
     private int _liveViewHeight;
     private volatile LiveViewFrame? _latestFrame; // Always keep the most recent frame for lowest latency
-    private bool _debugFrameSaved; // Debug: only save one frame
 
     /// <summary>
     /// Gets whether live view is currently active.
@@ -107,9 +108,7 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
         _cameraLifetime = cameraLifetime;
         _libRawLifetime = libRawLifetime;
 
-        // Subscribe to live view frames
         _liveViewService.FrameReceived += OnLiveViewFrameReceived;
-        _diagnostics.RecordEvent("Adapter", $"DIAG: Subscribed to LiveViewService.FrameReceived (service instance: {_liveViewService.GetHashCode()})");
     }
 
     private int _frameReceivedCount = 0;
@@ -259,6 +258,13 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
     {
         EnsureConnected();
 
+        // Still capture and live view use the same camera-side image queue. Leaving live
+        // view active can consume or block the RAF produced by the exposure.
+        if (_liveViewActive)
+        {
+            StopVideoCapture();
+        }
+
         lock (_sync)
         {
             if (_captureTask != null && !_captureTask.IsCompleted)
@@ -271,6 +277,7 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
             _cameraState = FujiCameraExposureState.Exposing;
             _imageReady = false;
             _lastImagePackage = null;
+            _lastExposureError = null;
 
             _captureTask = Task.Run(() =>
                 _camera.CaptureRawAsync(exposureTime, _currentIso, _captureCts.Token),
@@ -281,6 +288,7 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
                 {
                     _cameraState = FujiCameraExposureState.Error;
                     _imageReady = false;
+                    _lastExposureError = "The exposure was cancelled.";
                     return;
                 }
 
@@ -288,7 +296,8 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
                 {
                     _cameraState = FujiCameraExposureState.Error;
                     _imageReady = false;
-                    _diagnostics.RecordEvent("Adapter", $"Exposure task faulted: {task.Exception?.GetBaseException().Message}");
+                    _lastExposureError = task.Exception?.GetBaseException().Message ?? "The exposure failed.";
+                    _diagnostics.RecordEvent("Adapter", $"Exposure task faulted: {_lastExposureError}");
                     return;
                 }
 
@@ -362,6 +371,10 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
 
     public FujiImagePackage? LastImagePackage => _lastImagePackage;
 
+    public string? LastExposureError => _lastExposureError;
+
+    public FujiCameraCapabilities CurrentCapabilities => _capabilities;
+
     public FujiCameraExposureState GetCameraState() => _cameraState;
 
     public double GetExposureProgress()
@@ -425,6 +438,14 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
 
         Logger.Info($"[TIMING] LibRaw processing: {libRawMs}ms, Success={libRaw.Success}, {libRaw.Width}x{libRaw.Height}, BayerLen={libRaw.BayerData.Length}, RgbLen={libRaw.DebayeredRgb?.Length ?? 0}");
 
+        if (!libRaw.Success)
+        {
+            _cameraState = FujiCameraExposureState.Error;
+            _lastExposureError = $"LibRaw could not decode the RAF frame (status: {libRaw.Status})." +
+                (string.IsNullOrWhiteSpace(libRaw.RafSidecarPath) ? string.Empty : $" Recovery RAF: {libRaw.RafSidecarPath}");
+            throw new InvalidOperationException(_lastExposureError);
+        }
+
         var package = _imageBuilder.Build(raw, libRaw, _capabilities, _config);
 
         var buildMs = stepStopwatch.ElapsedMilliseconds;
@@ -432,23 +453,23 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
 
         Logger.Info($"[TIMING] Image build: {buildMs}ms, {package.Width}x{package.Height}");
         
-        // Diagnostic logging for black image investigation
         if (package.Pixels.Length > 0)
         {
             ushort min = ushort.MaxValue;
             ushort max = ushort.MinValue;
             long sum = 0;
+            var sampleCount = 0;
             
-            // Sample every 100th pixel to avoid performance hit
-            for (int i = 0; i < package.Pixels.Length; i += 100)
+            for (var i = 0; i < package.Pixels.Length; i += 100)
             {
                 var val = package.Pixels[i];
                 if (val < min) min = val;
                 if (val > max) max = val;
                 sum += val;
+                sampleCount++;
             }
             
-            double avg = (double)sum / (package.Pixels.Length / 100 + 1);
+            var avg = sampleCount > 0 ? (double)sum / sampleCount : 0.0;
             _diagnostics.RecordEvent("Adapter", $"Image stats (sampled): Min={min}, Max={max}, Avg={avg:F2}");
         }
 
@@ -458,26 +479,16 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
         _imageReady = false;
         _cameraState = FujiCameraExposureState.Idle;
         
-        // For X-Trans cameras: We use LibRaw to debayer non-destructively (raw data is preserved).
-        // The debayered RGB data is used for NINA's live preview to show color images.
-        //
-        // Since NINA's GetExposure() expects single-channel data (width*height), we have options:
-        // 1. Return debayered RGB converted to luminance (grayscale preview, shows image content)
-        // 2. Return raw bayer data (NINA can't debayer X-Trans, so this shows incorrectly)
-        // 3. Try returning RGB data in a format NINA might understand (experimental)
-        //
-        // The metadata with BAYERPAT=XTRANS is already set in the image package,
-        // which will be written to FITS/XISF files for stacking software.
-        // The raw bayer data in package.Pixels is always preserved for proper stacking.
+        // NINA's GenericCamera path expects a single-channel frame. LibRaw gives us
+        // debayered RGB for X-Trans RAFs, so expose that as synthetic RGGB for preview
+        // while keeping XTNSPAT metadata to record the real sensor pattern.
         var debayeredRgb = package.GetDebayeredRgb();
-        var previewMultipliers = package.GetPreviewCameraMultipliers();
-        var previewBitDepth = package.GetPreviewBitDepth();
         if (debayeredRgb != null && package.ColorFilterPattern.StartsWith("XTRANS", StringComparison.OrdinalIgnoreCase))
         {
             // Try returning RGB data for color preview
             try
             {
-                var syntheticBayer = ConvertRgbToSyntheticBayer(debayeredRgb, package.Width, package.Height, previewMultipliers);
+                var syntheticBayer = SyntheticBayerConverter.FromRgb(debayeredRgb, package.Width, package.Height);
 
                 var convertMs = stepStopwatch.ElapsedMilliseconds;
                 var totalMs = totalStopwatch.ElapsedMilliseconds;
@@ -490,7 +501,9 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
             catch (Exception ex)
             {
                 Logger.Error($"[TIMING] Synthetic Bayer conversion failed: {ex.Message}");
-                return package.Pixels;
+                _cameraState = FujiCameraExposureState.Error;
+                _lastExposureError = $"X-Trans preview conversion failed: {ex.Message}";
+                throw new InvalidOperationException(_lastExposureError, ex);
             }
         }
 
@@ -501,101 +514,6 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
         return package.Pixels;
     }
     
-    /// <summary>
-    /// Converts RGB data to a synthetic RGGB Bayer pattern.
-    /// This allows NINA to display a color preview for X-Trans cameras by treating the data as standard Bayer.
-    /// LibRaw is configured for raw camera space with neutral settings, so we do a direct conversion
-    /// without any color correction to avoid double-processing issues with NINA 3.2's color pipeline.
-    /// </summary>
-    private ushort[] ConvertRgbToSyntheticBayer(ushort[] rgbData, int width, int height, double[]? cameraMultipliers)
-    {
-        var bayer = new ushort[width * height];
-        
-        // Calculate the source width from the RGB data length
-        // The RGB data might be wider than the target width if we applied a safety crop
-        // rgbData.Length = sourceWidth * height * 3
-        int sourceWidth = rgbData.Length / (height * 3);
-        
-        // Parallel loop for performance
-        Parallel.For(0, height, y =>
-        {
-            for (int x = 0; x < width; x++)
-            {
-                // Target index (packed)
-                int index = y * width + x;
-                
-                // Source index (using source stride)
-                int rgbIndex = (y * sourceWidth + x) * 3;
-                
-                // RGGB Pattern:
-                // R G
-                // G B
-                
-                bool isEvenRow = (y % 2 == 0);
-                bool isEvenCol = (x % 2 == 0);
-                
-                if (isEvenRow)
-                {
-                    if (isEvenCol)
-                    {
-                        // Red
-                        bayer[index] = rgbData[rgbIndex];
-                    }
-                    else
-                    {
-                        // Green (on Red row)
-                        bayer[index] = rgbData[rgbIndex + 1];
-                    }
-                }
-                else
-                {
-                    if (isEvenCol)
-                    {
-                        // Green (on Blue row)
-                        bayer[index] = rgbData[rgbIndex + 1];
-                    }
-                    else
-                    {
-                        // Blue
-                        bayer[index] = rgbData[rgbIndex + 2];
-                    }
-                }
-            }
-        });
-        
-        return bayer;
-    }
-
-    /// <summary>
-    /// Converts RGB data (RGBRGB... format) to luminance for NINA preview display.
-    /// This is the fallback method when RGB preview doesn't work.
-    /// Since NINA's GetExposure() expects single-channel data (width*height), we convert
-    /// RGB to grayscale luminance for preview. The raw bayer data is still available in
-    /// the image package for proper stacking.
-    /// 
-    /// This debayering is non-destructive - it's only for live preview.
-    /// </summary>
-    private ushort[] ConvertRgbToLuminance(ushort[] rgbData, int width, int height)
-    {
-        // Convert RGB to luminance (Y = 0.299*R + 0.587*G + 0.114*B)
-        // This provides a grayscale preview that shows the image content
-        // The raw bayer data is preserved in the image package for stacking software
-        var luminance = new ushort[width * height];
-        for (int i = 0; i < width * height; i++)
-        {
-            var r = rgbData[i * 3];
-            var g = rgbData[i * 3 + 1];
-            var b = rgbData[i * 3 + 2];
-            
-            // ITU-R BT.601 luminance formula
-            var y = (ushort)(0.299 * r + 0.587 * g + 0.114 * b);
-            luminance[i] = y;
-        }
-        
-        _diagnostics.RecordEvent("Adapter", $"Converted RGB to luminance for X-Trans preview ({luminance.Length} pixels)");
-        return luminance;
-    }
-
     public bool IsExposureReady()
     {
         lock (_sync)
@@ -617,6 +535,14 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
     public void StartVideoCapture(double exposureTime, int width, int height)
     {
         EnsureConnected();
+
+        lock (_sync)
+        {
+            if (_captureTask != null && !_captureTask.IsCompleted)
+            {
+                throw new InvalidOperationException("Live view cannot start while an exposure is in progress.");
+            }
+        }
 
         if (_liveViewActive)
         {
@@ -644,20 +570,8 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
         while (_liveViewFrameQueue.TryTake(out _)) { }
         _latestFrame = null;
 
-        _diagnostics.RecordEvent("Adapter", $"DIAG: Calling StartAsync on LiveViewService instance: {_liveViewService.GetHashCode()}");
-
-        // Start live view with user-configured quality and size
-        _liveViewService.StartAsync(handle, liveViewQuality, liveViewSize, CancellationToken.None)
-            .ContinueWith(t =>
-            {
-                if (t.IsFaulted)
-                {
-                    _diagnostics.RecordEvent("Adapter", $"Failed to start live view: {t.Exception?.GetBaseException().Message}");
-                    _liveViewActive = false;
-                }
-            });
-
-        _liveViewActive = true;
+        _liveViewService.StartAsync(handle, liveViewQuality, liveViewSize, CancellationToken.None).GetAwaiter().GetResult();
+        _liveViewActive = _liveViewService.IsStreaming;
         _diagnostics.RecordEvent("Adapter", $"Live view started: {_liveViewWidth}x{_liveViewHeight} ({liveViewSize}/{liveViewQuality})");
     }
 
@@ -672,10 +586,7 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
         }
 
         var handle = _camera.SessionHandle;
-        if (handle != IntPtr.Zero)
-        {
-            _liveViewService.StopAsync(handle).GetAwaiter().GetResult();
-        }
+        _liveViewService.StopAsync(handle).GetAwaiter().GetResult();
 
         // Clear the frame queue
         while (_liveViewFrameQueue.TryTake(out _)) { }
@@ -685,7 +596,6 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
         _liveViewWidth = 0;
         _liveViewHeight = 0;
         _latestFrame = null;
-        _debugFrameSaved = false; // Reset so next session saves a new debug frame
         _frameReceivedCount = 0;
         _getVideoCaptureCount = 0;
         _diagnostics.RecordEvent("Adapter", "Live view stopped");
@@ -747,24 +657,6 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
 
         // Make a local copy of the JPEG data to ensure thread safety during processing
         var jpegData = frame.JpegData;
-
-        // Debug: Save first frame to disk to verify JPEG quality
-        if (_debugFrameSaved == false)
-        {
-            _debugFrameSaved = true;
-            try
-            {
-                var debugPath = System.IO.Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
-                    $"fuji_liveview_debug_{DateTime.Now:HHmmss}.jpg");
-                System.IO.File.WriteAllBytes(debugPath, jpegData);
-                _diagnostics.RecordEvent("Adapter", $"DEBUG: Saved frame to {debugPath} ({jpegData.Length} bytes)");
-            }
-            catch (Exception ex)
-            {
-                _diagnostics.RecordEvent("Adapter", $"DEBUG: Failed to save frame: {ex.Message}");
-            }
-        }
 
         // Convert JPEG to ushort[] image data
         return ConvertJpegToImageData(jpegData, width, height);
@@ -873,10 +765,18 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
         if (!_connected)
             return -1;
 
-        // Refresh capabilities to get latest battery info
-        _capabilities = _camera.GetCapabilitiesSnapshot();
+        lock (_sync)
+        {
+            if (_cameraState == FujiCameraExposureState.Idle && !_liveViewActive &&
+                DateTime.UtcNow - _lastStatusRefreshUtc >= TimeSpan.FromSeconds(15))
+            {
+                _capabilities = _camera.RefreshCapabilitiesSnapshot();
+                _lastStatusRefreshUtc = DateTime.UtcNow;
+            }
+        }
+
         var level = _capabilities.Metadata.BatteryLevel;
-        return level > 0 ? level : -1;
+        return level >= 0 ? level : -1;
     }
 
     private void EnsureConnected()
@@ -889,26 +789,48 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
 
     private void CancelCapture()
     {
+        Task<RawCaptureResult>? captureTask;
+        CancellationTokenSource? captureCts;
         lock (_sync)
         {
-            if (_captureTask == null)
+            captureTask = _captureTask;
+            captureCts = _captureCts;
+            if (captureTask == null)
             {
                 return;
             }
+        }
 
-            try
-            {
-                _camera.StopExposureAsync().GetAwaiter().GetResult();
-            }
-            catch (Exception ex)
-            {
-                _diagnostics.RecordEvent("Adapter", $"StopExposure failed during cancel: {ex.Message}");
-            }
+        captureCts?.Cancel();
+        try
+        {
+            _camera.StopExposureAsync().GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            _diagnostics.RecordEvent("Adapter", $"StopExposure failed during cancel: {ex.Message}");
+        }
 
-            _captureCts?.Cancel();
-            _captureTask = null;
-            _captureCts?.Dispose();
-            _captureCts = null;
+        try
+        {
+            captureTask.GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _diagnostics.RecordEvent("Adapter", $"Exposure ended with an error during cancel: {ex.GetBaseException().Message}");
+        }
+
+        lock (_sync)
+        {
+            if (ReferenceEquals(_captureTask, captureTask))
+            {
+                _captureTask = null;
+                _captureCts?.Dispose();
+                _captureCts = null;
+            }
             _cameraState = FujiCameraExposureState.Idle;
             _imageReady = false;
             _lastImagePackage = null;
@@ -924,14 +846,13 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
 
         _disposed = true;
 
-        // Unsubscribe from live view events
-        _liveViewService.FrameReceived -= OnLiveViewFrameReceived;
-        _liveViewFrameQueue.Dispose();
-
         if (_connected)
         {
             Disconnect();
         }
+
+        _liveViewService.FrameReceived -= OnLiveViewFrameReceived;
+        _liveViewFrameQueue.Dispose();
 
         _cameraLifetime.Dispose();
         _libRawLifetime.Dispose();

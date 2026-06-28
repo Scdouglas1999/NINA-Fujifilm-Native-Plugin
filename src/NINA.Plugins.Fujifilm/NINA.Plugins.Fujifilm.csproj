@@ -1,12 +1,14 @@
-<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <LangVersion>latest</LangVersion>
+    <Nullable>annotations</Nullable>
     <AssemblyName>NINA.Plugins.Fujifilm</AssemblyName>
     <RootNamespace>NINA.Plugins.Fujifilm</RootNamespace>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-    <Version>3.0.1.0</Version>
+    <Version>3.0.2.0</Version>
+    <FujifilmSdkDir Condition="'$(FujifilmSdkDir)' == '' and '$(FUJIFILM_SDK_DIR)' != ''">$(FUJIFILM_SDK_DIR)</FujifilmSdkDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,11 +25,20 @@
 
   <ItemGroup>
     <None Include="Configuration\Assets\CameraConfigs\**\*.json" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="Interop\Native\**\*" CopyToOutputDirectory="PreserveNewest" />
-    <!-- Also copy LibRaw DLLs to root so Windows can find them when loading LibRawWrapper.dll -->
     <None Include="Interop\Native\LibRawWrapper.dll" CopyToOutputDirectory="PreserveNewest" Link="LibRawWrapper.dll" />
     <None Include="Interop\Native\libraw.dll" CopyToOutputDirectory="PreserveNewest" Link="libraw.dll" />
     <None Include="plugin.json" CopyToOutputDirectory="Always" />
+  </ItemGroup>
+
+  <!-- Fujifilm's proprietary Shooting SDK is not committed. Point FujifilmSdkDir (or the
+       FUJIFILM_SDK_DIR environment variable) at an extracted x64 runtime to make a usable build. -->
+  <ItemGroup Condition="'$(FujifilmSdkDir)' != ''">
+    <FujifilmSdkRuntime Include="$(FujifilmSdkDir)\XAPI.dll" />
+    <FujifilmSdkRuntime Include="$(FujifilmSdkDir)\XSDK.DAT" />
+    <FujifilmSdkRuntime Include="$(FujifilmSdkDir)\FTLPTP.dll" />
+    <FujifilmSdkRuntime Include="$(FujifilmSdkDir)\FTLPTPIP.dll" />
+    <FujifilmSdkRuntime Include="$(FujifilmSdkDir)\FF????API.dll" />
+    <None Include="@(FujifilmSdkRuntime)" CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
   </ItemGroup>
 
   <Import Project="..\..\build\Bundle.targets" Condition="Exists('..\..\build\Bundle.targets')" />

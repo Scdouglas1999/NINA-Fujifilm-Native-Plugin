@@ -1,5 +1,7 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
+using System.Runtime.Versioning;
 
 [assembly: AssemblyTitle("Fujifilm Native Camera")]
 [assembly: AssemblyDescription("Native N.I.N.A. camera provider for Fujifilm X/GFX bodies.")]
@@ -17,5 +19,7 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyMetadata("TargetApplication", "N.I.N.A.")]
 [assembly: AssemblyMetadata("MinimumApplicationVersion", "3.2.0.9001")]
 
-[assembly: AssemblyVersion("2.4.9.0")]
-[assembly: AssemblyFileVersion("2.4.9.0")]
+[assembly: AssemblyVersion("3.0.2.0")]
+[assembly: AssemblyFileVersion("3.0.2.0")]
+[assembly: InternalsVisibleTo("NINA.Plugins.Fujifilm.Tests")]
+[assembly: SupportedOSPlatform("windows")]

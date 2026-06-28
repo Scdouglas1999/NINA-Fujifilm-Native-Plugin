@@ -2,8 +2,6 @@ using System;
 using System.ComponentModel.Composition;
 using System.Threading;
 using System.Threading.Tasks;
-using NINA.Plugins.Fujifilm.Configuration;
-using NINA.Plugins.Fujifilm.Configuration.Loading;
 using NINA.Plugins.Fujifilm.Diagnostics;
 using NINA.Plugins.Fujifilm.Interop;
 using NINA.Plugins.Fujifilm.Interop.Native;
@@ -15,11 +13,9 @@ namespace NINA.Plugins.Fujifilm.Devices;
 public sealed class FujiFocuser : IAsyncDisposable
 {
     private readonly IFujifilmInterop _interop;
-    private readonly ICameraModelCatalog _catalog;
     private readonly IFujifilmDiagnosticsService _diagnostics;
 
     private FujifilmCameraDescriptor? _descriptor;
-    private CameraConfig? _config;
     private FujifilmCameraSession? _session;
     private int _focusMin;
     private int _focusMax;
@@ -32,20 +28,18 @@ public sealed class FujiFocuser : IAsyncDisposable
     public string LensProductName => _lensProductName;
 
     [ImportingConstructor]
-    public FujiFocuser(IFujifilmInterop interop, ICameraModelCatalog catalog, IFujifilmDiagnosticsService diagnostics)
+    public FujiFocuser(IFujifilmInterop interop, IFujifilmDiagnosticsService diagnostics)
     {
         _interop = interop;
-        _catalog = catalog;
         _diagnostics = diagnostics;
     }
 
     public void Initialize(FujifilmCameraDescriptor descriptor)
     {
         _descriptor = descriptor;
-        _config = _catalog.TryGetByProductName(descriptor.DisplayName);
     }
 
-    public async Task MoveAsync(int position, CancellationToken cancellationToken)
+    public async Task MoveAsync(int position, CancellationToken cancellationToken, TimeSpan? timeout = null)
     {
         var session = await EnsureSessionAsync(cancellationToken).ConfigureAwait(false);
         var absolute = position + _focusMin;
@@ -57,6 +51,12 @@ public sealed class FujiFocuser : IAsyncDisposable
         {
             absolute = _focusMax;
         }
+
+        if (_focusStep > 1)
+        {
+            absolute = _focusMin + (int)Math.Round((absolute - _focusMin) / (double)_focusStep) * _focusStep;
+            absolute = Math.Clamp(absolute, _focusMin, _focusMax);
+        }
         
         _diagnostics.RecordEvent("Focuser", $"MoveAsync: requested position={position}, absolute={absolute}, min={_focusMin}, max={_focusMax}");
         
@@ -65,10 +65,26 @@ public sealed class FujiFocuser : IAsyncDisposable
         
         FujifilmSdkWrapper.CheckResult(session.Handle, result, nameof(FujifilmSdkWrapper.XSDK_SetFocusPos));
         
-        // Verify the move by reading back the position
-        await Task.Delay(100, cancellationToken); // Small delay for lens to respond
-        var verifyResult = FujifilmSdkWrapper.XSDK_GetFocusPos(session.Handle, out var actualPos);
-        _diagnostics.RecordEvent("Focuser", $"Position after move: requested={absolute}, actual={actualPos}");
+        var effectiveTimeout = timeout is { } requested && requested > TimeSpan.Zero
+            ? requested
+            : TimeSpan.FromSeconds(5);
+        var deadline = DateTime.UtcNow + effectiveTimeout;
+        while (true)
+        {
+            await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+            var verifyResult = FujifilmSdkWrapper.XSDK_GetFocusPos(session.Handle, out var actualPos);
+            FujifilmSdkWrapper.CheckResult(session.Handle, verifyResult, nameof(FujifilmSdkWrapper.XSDK_GetFocusPos));
+            if (Math.Abs(actualPos - absolute) <= Math.Max(1, _focusStep))
+            {
+                _diagnostics.RecordEvent("Focuser", $"Focus move complete: requested={absolute}, actual={actualPos}");
+                return;
+            }
+
+            if (DateTime.UtcNow >= deadline)
+            {
+                throw new TimeoutException($"Lens did not reach focus position {absolute}; last reported position was {actualPos}.");
+            }
+        }
     }
 
     public async Task<int> GetPositionAsync(CancellationToken cancellationToken)
@@ -104,14 +120,6 @@ public sealed class FujiFocuser : IAsyncDisposable
         _session = await _interop.OpenCameraAsync(_descriptor.DeviceId, cancellationToken).ConfigureAwait(false);
         _diagnostics.RecordEvent("Focuser", $"Opened focuser session for {_descriptor.DisplayName}");
 
-        // XSDK_SetFocusMode is not available in the current XAPI.dll.
-        // We rely on the user setting the physical focus switch to 'S' or 'C'.
-        // if (_config?.SdkConstants.FocusModeManual != 0)
-        // {
-        //     var setMode = FujifilmSdkWrapper.XSDK_SetFocusMode(_session.Handle, _config.SdkConstants.FocusModeManual);
-        //     FujifilmSdkWrapper.CheckResult(_session.Handle, setMode, nameof(FujifilmSdkWrapper.XSDK_SetFocusMode));
-        // }
-
         QueryFocusLimits();
         QueryLensInfo();
         return _session;
@@ -135,17 +143,15 @@ public sealed class FujiFocuser : IAsyncDisposable
         
         if (result != FujifilmSdkWrapper.XSDK_COMPLETE)
         {
-            _diagnostics.RecordEvent("Focuser", $"XSDK_CapFocusPos failed with result {result}. Using default range.");
-            _focusMin = 0;
-            _focusMax = 10000;
-            _focusStep = 1;
-            return;
+            var error = FujifilmSdkWrapper.GetLastError(_session.Handle);
+            throw new NotSupportedException(
+                $"The attached lens did not provide focus-position capabilities (SDK result {result}, error 0x{error.ErrorCode:X}).");
         }
 
         // Check if lens supports focus position control
-        if (cap.lFocusPlsFCSDepthCap == 0 || cap.lFocusPlsINF == 0 && cap.lFocusPlsMOD == 0)
+        if (cap.lFocusPlsINF == 0 && cap.lFocusPlsMOD == 0)
         {
-            var message = "This lens does not support programmatic focus control. Ensure the lens is set to MF (Manual Focus) mode and supports electronic focus.";
+            var message = "This lens did not report a programmable focus range. Use an electronic AF lens and set the camera focus selector to S or C.";
             _diagnostics.RecordEvent("Focuser", $"ERROR: {message}");
             throw new NotSupportedException(message);
         }

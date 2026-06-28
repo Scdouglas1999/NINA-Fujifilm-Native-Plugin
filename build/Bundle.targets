@@ -1,21 +1,33 @@
 <Project>
   <PropertyGroup>
-    <PublishDir>$(OutputPath)publish\</PublishDir>
     <DistDir>$(MSBuildThisFileDirectory)..\dist\</DistDir>
     <EnableZipPackaging Condition="'$(MSBuildRuntimeType)' == 'Full'">true</EnableZipPackaging>
   </PropertyGroup>
 
-  <Target Name="PreparePublish" AfterTargets="Build">
+  <Target Name="PrepareFujifilmPluginPublish" AfterTargets="Build">
+    <PropertyGroup>
+      <PluginPublishDir>$(TargetDir)publish\</PluginPublishDir>
+    </PropertyGroup>
     <ItemGroup>
-      <PublishItems Include="$(TargetPath)" />
-      <PublishItems Include="$(TargetDir)plugin.json" />
-      <PublishItems Include="$(TargetDir)Interop\Native\**\*.dll" />
-      <PublishItems Include="$(TargetDir)Configuration\Assets\CameraConfigs\**\*" />
+      <PublishRootItems Include="$(TargetPath)" />
+      <PublishRootItems Include="$(TargetDir)plugin.json" />
+      <PublishRootItems Include="$(TargetDir)LibRawWrapper.dll" />
+      <PublishRootItems Include="$(TargetDir)libraw.dll" />
+      <PublishRootItems Include="$(TargetDir)XAPI.dll" Condition="Exists('$(TargetDir)XAPI.dll')" />
+      <PublishRootItems Include="$(TargetDir)XSDK.DAT" Condition="Exists('$(TargetDir)XSDK.DAT')" />
+      <PublishRootItems Include="$(TargetDir)FTLPTP.dll" Condition="Exists('$(TargetDir)FTLPTP.dll')" />
+      <PublishRootItems Include="$(TargetDir)FTLPTPIP.dll" Condition="Exists('$(TargetDir)FTLPTPIP.dll')" />
+      <PublishRootItems Include="$(TargetDir)FF????API.dll" />
+      <PublishCameraConfigs Include="$(TargetDir)Configuration\Assets\CameraConfigs\*.json" />
     </ItemGroup>
 
-    <RemoveDir Directories="$(PublishDir)" />
-    <MakeDir Directories="$(PublishDir)" />
-    <Copy SourceFiles="@(PublishItems)" DestinationFolder="$(PublishDir)%(RecursiveDir)" SkipUnchangedFiles="true" />
+    <RemoveDir Directories="$(PluginPublishDir)" />
+    <MakeDir Directories="$(PluginPublishDir)" />
+    <MakeDir Directories="$(PluginPublishDir)Configuration\Assets\CameraConfigs" />
+    <Copy SourceFiles="@(PublishRootItems)" DestinationFolder="$(PluginPublishDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(PublishCameraConfigs)"
+          DestinationFiles="@(PublishCameraConfigs->'$(PluginPublishDir)Configuration\Assets\CameraConfigs\%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
   </Target>
 
   <UsingTask TaskName="CreateZip" TaskFactory="CodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll" Condition="'$(EnableZipPackaging)' == 'true'">
@@ -37,11 +49,15 @@
     </Task>
   </UsingTask>
 
-  <Target Name="PackagePlugin" AfterTargets="PreparePublish" Condition="'$(EnableZipPackaging)' == 'true'">
+  <Target Name="PackagePlugin" AfterTargets="PrepareFujifilmPluginPublish" Condition="'$(EnableZipPackaging)' == 'true'">
+    <Error Condition="!Exists('$(PluginPublishDir)XAPI.dll')"
+           Text="Cannot package a usable plugin without the Fujifilm Shooting SDK. Set FujifilmSdkDir to the extracted x64 runtime directory." />
+    <Error Condition="!Exists('$(PluginPublishDir)FF0002API.dll')"
+           Text="The SDK runtime does not contain FF0002API.dll, which is required for legacy X-T2 support." />
     <MakeDir Directories="$(DistDir)" />
     <PropertyGroup>
       <ZipFile>$(DistDir)NINA.Plugins.Fujifilm-$(Configuration).zip</ZipFile>
     </PropertyGroup>
-    <CreateZip SourceDir="$(PublishDir)" ZipPath="$(ZipFile)" />
+    <CreateZip SourceDir="$(PluginPublishDir)" ZipPath="$(ZipFile)" />
   </Target>
 </Project>

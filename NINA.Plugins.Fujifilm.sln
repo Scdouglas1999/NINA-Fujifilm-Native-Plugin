@@ -4,6 +4,8 @@ VisualStudioVersion = 17.10.34024.191
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NINA.Plugins.Fujifilm", "src\NINA.Plugins.Fujifilm\NINA.Plugins.Fujifilm.csproj", "{7C206AF6-1139-4C3B-9A53-74624B65AF37}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NINA.Plugins.Fujifilm.Tests", "tests\NINA.Plugins.Fujifilm.Tests\NINA.Plugins.Fujifilm.Tests.csproj", "{D92B7578-6B9A-46F8-97A9-CBEDB43AD318}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -14,6 +16,10 @@ Global
 		{7C206AF6-1139-4C3B-9A53-74624B65AF37}.Debug|x64.Build.0 = Debug|x64
 		{7C206AF6-1139-4C3B-9A53-74624B65AF37}.Release|x64.ActiveCfg = Release|x64
 		{7C206AF6-1139-4C3B-9A53-74624B65AF37}.Release|x64.Build.0 = Release|x64
+		{D92B7578-6B9A-46F8-97A9-CBEDB43AD318}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{D92B7578-6B9A-46F8-97A9-CBEDB43AD318}.Debug|x64.Build.0 = Debug|Any CPU
+		{D92B7578-6B9A-46F8-97A9-CBEDB43AD318}.Release|x64.ActiveCfg = Release|Any CPU
+		{D92B7578-6B9A-46F8-97A9-CBEDB43AD318}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

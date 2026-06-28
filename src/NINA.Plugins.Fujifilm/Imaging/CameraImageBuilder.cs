@@ -38,11 +38,22 @@ internal sealed class CameraImageBuilder
 
         // For X-Trans, we use DebayeredRgb and don't need BayerData, so skip the allocation
         var hasDebayeredRgb = processed.GetDebayeredRgb() is { Length: > 0 };
-        var pixels = processed.Success && processed.BayerData.Length == width * height
-            ? processed.BayerData
-            : hasDebayeredRgb
-                ? Array.Empty<ushort>()  // X-Trans: don't allocate - we use DebayeredRgb
-                : new ushort[Math.Max(1, width * height)];
+        ushort[] pixels;
+        if (processed.Success && processed.BayerData.Length == width * height)
+        {
+            pixels = processed.BayerData;
+        }
+        else if (hasDebayeredRgb && processed.GetDebayeredRgb()!.Length == width * height * 3)
+        {
+            // X-Trans: GetExposure converts this RGB buffer to synthetic RGGB.
+            pixels = Array.Empty<ushort>();
+        }
+        else
+        {
+            throw new InvalidDataException(
+                $"RAW decoding returned no complete image buffer for {width}x{height} pixels " +
+                $"(Bayer={processed.BayerData.Length}, RGB={processed.GetDebayeredRgb()?.Length ?? 0}).");
+        }
 
         var (pattern, patternWidth, patternHeight) = ResolvePattern(processed, capabilities, config);
         var rafPath = ResolveRafSidecar(raw, processed);
@@ -69,7 +80,7 @@ internal sealed class CameraImageBuilder
             processed.PreviewBitDepth);
     }
 
-    private int DetermineDimension(int libRawValue, int rawValue, int fallback)
+    private static int DetermineDimension(int libRawValue, int rawValue, int fallback)
     {
         if (libRawValue > 0)
         {
@@ -143,12 +154,16 @@ internal sealed class CameraImageBuilder
             Directory.CreateDirectory(imageDirectory);
             
             // Generate filename with timestamp, exposure, and ISO
-            var timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+            var timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff", CultureInfo.InvariantCulture);
             var exposureStr = $"{raw.ExposureSeconds:F1}s".Replace(".", "_");
-            var fileName = $"Fuji_{timestamp}_{exposureStr}_ISO{raw.Iso}.raf";
+            var uniqueSuffix = Guid.NewGuid().ToString("N")[..8];
+            var fileName = $"Fuji_{timestamp}_{exposureStr}_ISO{raw.Iso}_{uniqueSuffix}.raf";
             
             var filePath = Path.Combine(imageDirectory, fileName);
-            File.WriteAllBytes(filePath, raw.RawBuffer);
+            using (var stream = new FileStream(filePath, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
+            {
+                stream.Write(raw.RawBuffer, 0, raw.RawBuffer.Length);
+            }
             
             _diagnostics.RecordEvent("CameraImageBuilder", $"Saved RAF file to: {filePath}");
             return filePath;
@@ -299,98 +314,4 @@ public sealed record FujiImagePackage(
 
     public int GetPreviewBitDepth() => PreviewBitDepth;
 
-    /// <summary>
-    /// Gets XISF-compatible properties from FITS keywords.
-    /// NINA handles XISF file writing, but we ensure metadata is XISF-compatible.
-    /// </summary>
-    public IReadOnlyDictionary<string, object> GetXisfProperties()
-    {
-        var properties = new Dictionary<string, object>();
-
-        // Critical X-Trans properties for XISF
-        if (!string.IsNullOrEmpty(ColorFilterPattern))
-        {
-            var standardizedPattern = ColorFilterPattern.ToUpperInvariant();
-            if (standardizedPattern.StartsWith("XTRANS", StringComparison.OrdinalIgnoreCase) ||
-                standardizedPattern.StartsWith("X-", StringComparison.OrdinalIgnoreCase))
-            {
-                standardizedPattern = "XTRANS";
-            }
-
-            properties["BAYERPAT"] = standardizedPattern;
-            properties["CFAAXIS"] = $"{PatternWidth}x{PatternHeight}";
-            properties["CFA"] = true;
-        }
-
-        // Convert FITS keywords to XISF properties
-        foreach (var kvp in FitsKeywords)
-        {
-            if (properties.ContainsKey(kvp.Key))
-            {
-                continue;
-            }
-
-            // Convert to appropriate type for XISF
-            if (TryConvertToXisfType(kvp.Key, kvp.Value, out var typedValue))
-            {
-                properties[kvp.Key] = typedValue;
-            }
-            else
-            {
-                properties[kvp.Key] = kvp.Value;
-            }
-        }
-
-        return properties;
-    }
-
-    private static bool TryConvertToXisfType(string key, string value, out object? typedValue)
-    {
-        typedValue = null;
-
-        // Numeric properties
-        if (key == "EXPTIME" || key == "XPIXSZ" || key == "YPIXSZ" || key == "EGAIN")
-        {
-            if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var dbl))
-            {
-                typedValue = dbl;
-                return true;
-            }
-        }
-
-        if (key == "ISO" || key == "XBINNING" || key == "YBINNING" ||
-            key == "XBAYROFF" || key == "YBAYROFF" || key == "BLACKLVL" ||
-            key == "WHITELVL" || key == "FUJIISO" || key == "FUJISHUT" ||
-            key == "FUJIDR")
-        {
-            if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var intVal))
-            {
-                typedValue = intVal;
-                return true;
-            }
-        }
-
-        // Boolean properties
-        if (key == "CFA")
-        {
-            if (bool.TryParse(value, out var boolVal))
-            {
-                typedValue = boolVal;
-                return true;
-            }
-            if (value == "1" || value == "true" || value == "True")
-            {
-                typedValue = true;
-                return true;
-            }
-            if (value == "0" || value == "false" || value == "False")
-            {
-                typedValue = false;
-                return true;
-            }
-        }
-
-        return false;
-    }
 }
-

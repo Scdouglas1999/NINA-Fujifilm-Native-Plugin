@@ -2,7 +2,7 @@
   "Name": "Fujifilm Native Camera",
   "Author": "Scdouglas",
   "Description": "Native Fujifilm X/GFX camera support for NINA",
-  "Version": "2.4.9.0",
+  "Version": "3.0.2.0",
   "Guid": "6e2b5a81-7c8e-4c09-9f2a-4f6a0bc6bb1e",
   "MinNinaVersion": "3.2.0",
   "Entrypoint": "NINA.Plugins.Fujifilm.Plugin.FujiManifest"

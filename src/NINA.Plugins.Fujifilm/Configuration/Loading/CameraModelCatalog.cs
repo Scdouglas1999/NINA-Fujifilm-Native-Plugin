@@ -4,6 +4,7 @@ using System.ComponentModel.Composition;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using NINA.Core.Utility;
 
 namespace NINA.Plugins.Fujifilm.Configuration.Loading;
 
@@ -21,9 +22,15 @@ public sealed class CameraModelCatalog : ICameraModelCatalog
 
     private IReadOnlyList<CameraConfig> _configs = Array.Empty<CameraConfig>();
     private Dictionary<string, CameraConfig> _lookup = new(StringComparer.OrdinalIgnoreCase);
+    private readonly string _configDirectory;
 
-    public CameraModelCatalog()
+    public CameraModelCatalog() : this(ResolveConfigDirectory())
     {
+    }
+
+    internal CameraModelCatalog(string configDirectory)
+    {
+        _configDirectory = configDirectory;
         Reload();
     }
 
@@ -43,8 +50,14 @@ public sealed class CameraModelCatalog : ICameraModelCatalog
             }
 
             var sanitized = SanitizeModelName(productName);
-            _lookup.TryGetValue(sanitized, out config);
-            return config;
+            if (_lookup.TryGetValue(sanitized, out config))
+            {
+                return config;
+            }
+
+            // SDK product strings commonly include a FUJIFILM vendor prefix. Match the
+            // longest model suffix so names such as X-H2S cannot be mistaken for X-H2.
+            return CameraModelRules.FindBestMatch(_configs, productName);
         }
     }
 
@@ -60,9 +73,10 @@ public sealed class CameraModelCatalog : ICameraModelCatalog
     {
         lock (_sync)
         {
-            var directory = ResolveConfigDirectory();
+            var directory = _configDirectory;
             if (!Directory.Exists(directory))
             {
+                Logger.Error($"Fujifilm camera configuration directory is missing: {directory}");
                 _configs = Array.Empty<CameraConfig>();
                 _lookup = new Dictionary<string, CameraConfig>(StringComparer.OrdinalIgnoreCase);
                 return;
@@ -80,6 +94,13 @@ public sealed class CameraModelCatalog : ICameraModelCatalog
                     var config = JsonSerializer.Deserialize<CameraConfig>(stream, _serializerOptions);
                     if (config == null || string.IsNullOrWhiteSpace(config.ModelName))
                     {
+                        Logger.Error($"Ignoring Fujifilm camera configuration without a model name: {file}");
+                        continue;
+                    }
+
+                    if (!CameraModelRules.IsValid(config))
+                    {
+                        Logger.Error($"Ignoring invalid Fujifilm camera configuration '{file}': sensor and exposure values must be positive and ordered.");
                         continue;
                     }
 
@@ -97,7 +118,7 @@ public sealed class CameraModelCatalog : ICameraModelCatalog
                 }
                 catch (Exception ex)
                 {
-                    // Ignore invalid individual config file for now.
+                    Logger.Error($"Failed to load Fujifilm camera configuration '{file}': {ex}");
                 }
             }
 
@@ -117,7 +138,6 @@ public sealed class CameraModelCatalog : ICameraModelCatalog
 
     private static string SanitizeModelName(string name)
     {
-        var chars = name.Where(char.IsLetterOrDigit).ToArray();
-        return new string(chars);
+        return CameraModelRules.NormalizeName(name);
     }
 }

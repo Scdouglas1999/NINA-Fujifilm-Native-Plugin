@@ -1,5 +1,4 @@
 using System;
-using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 
 namespace NINA.Plugins.Fujifilm.Interop.Native;
@@ -17,9 +16,8 @@ public sealed class FujifilmCameraSession : IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
-        // Handle lifecycle is now managed by FujifilmInterop via reference counting.
-        // We do NOT close the handle here to allow session sharing between Camera and Focuser.
-        Handle = IntPtr.Zero;
-        return default;
+        // FujifilmInterop owns and reference-counts the native handle. A camera and its
+        // lens focuser can share this object, so disposing one consumer must not invalidate it.
+        return ValueTask.CompletedTask;
     }
 }

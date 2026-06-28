@@ -3,6 +3,7 @@ using System.ComponentModel.Composition;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using NINA.Core.Utility;
 
 namespace NINA.Plugins.Fujifilm.Settings;
 
@@ -36,6 +37,7 @@ public sealed class FujiSettingsProvider : IFujiSettingsProvider
     {
         try
         {
+            Settings.Normalize();
             var directory = Path.GetDirectoryName(SettingsFilePath);
             if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
             {
@@ -47,8 +49,7 @@ public sealed class FujiSettingsProvider : IFujiSettingsProvider
         }
         catch (Exception ex)
         {
-            // Log error but don't throw - settings persistence failure shouldn't break the plugin
-            System.Diagnostics.Debug.WriteLine($"Failed to save Fujifilm plugin settings: {ex.Message}");
+            Logger.Error($"Failed to save Fujifilm plugin settings: {ex}");
         }
     }
 
@@ -62,14 +63,14 @@ public sealed class FujiSettingsProvider : IFujiSettingsProvider
                 var settings = JsonSerializer.Deserialize<FujiSettings>(json, JsonOptions);
                 if (settings != null)
                 {
+                    settings.Normalize();
                     return settings;
                 }
             }
         }
         catch (Exception ex)
         {
-            // Log error but continue with default settings
-            System.Diagnostics.Debug.WriteLine($"Failed to load Fujifilm plugin settings: {ex.Message}");
+            Logger.Error($"Failed to load Fujifilm plugin settings; defaults will be used: {ex}");
         }
 
         // Return default settings if loading failed or file doesn't exist

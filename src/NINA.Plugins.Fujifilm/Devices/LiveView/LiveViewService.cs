@@ -24,6 +24,7 @@ public sealed class LiveViewService : ILiveViewService, IDisposable
     private long _frameCount;
     private double _currentFps;
     private bool _disposed;
+    private IntPtr _activeHandle;
 
     /// <inheritdoc/>
     public event EventHandler<LiveViewFrame>? FrameReceived;
@@ -46,19 +47,22 @@ public sealed class LiveViewService : ILiveViewService, IDisposable
     /// <inheritdoc/>
     public async Task StartAsync(IntPtr handle, LiveViewQuality quality, LiveViewSize size, CancellationToken cancellationToken = default)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
         if (handle == IntPtr.Zero)
         {
             throw new ArgumentException("Invalid camera handle", nameof(handle));
         }
 
-        if (IsStreaming)
+        if (_activeHandle != IntPtr.Zero)
         {
             _diagnostics.RecordEvent("LiveView", "Live view already streaming, stopping first...");
-            await StopAsync(handle).ConfigureAwait(false);
+            await StopAsync(_activeHandle).ConfigureAwait(false);
         }
 
         _diagnostics.RecordEvent("LiveView", $"Starting live view: Quality={quality.GetDisplayName()}, Size={size.GetDisplayName()}");
 
+        var cameraLiveViewStarted = false;
         try
         {
             // Configure quality before starting
@@ -99,24 +103,31 @@ public sealed class LiveViewService : ILiveViewService, IDisposable
                 var error = FujifilmSdkWrapper.GetLastError(handle);
                 throw new InvalidOperationException($"Failed to start live view (result={startResult}, ErrCode=0x{error.ErrorCode:X})");
             }
+            cameraLiveViewStarted = true;
 
             // Initialize streaming state
             _frameCount = 0;
             _currentFps = 0;
             _fpsStopwatch.Restart();
-            _streamCts = new CancellationTokenSource();
+            _activeHandle = handle;
+            _streamCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
-            // Log subscriber count BEFORE starting the stream
-            var subscriberCount = FrameReceived?.GetInvocationList()?.Length ?? 0;
-            _diagnostics.RecordEvent("LiveView", $"DIAG: Starting stream with {subscriberCount} subscriber(s), _frameCount reset to {_frameCount}, instance: {GetHashCode()}");
-
-            // Start the streaming loop
             _streamTask = StreamFramesAsync(handle, _streamCts.Token);
 
             _diagnostics.RecordEvent("LiveView", "Live view started successfully");
         }
         catch (Exception ex)
         {
+            if (cameraLiveViewStarted)
+            {
+                var stopResult = FujifilmSdkWrapper.XSDK_SetProp(
+                    handle,
+                    FujifilmSdkWrapper.API_CODE_StopLiveView,
+                    0,
+                    0);
+                _diagnostics.RecordEvent("LiveView", $"Stopped camera live view after failed stream startup (result={stopResult}).");
+            }
+
             _diagnostics.RecordEvent("LiveView", $"Failed to start live view: {ex.Message}");
             throw;
         }
@@ -125,9 +136,14 @@ public sealed class LiveViewService : ILiveViewService, IDisposable
     /// <inheritdoc/>
     public async Task StopAsync(IntPtr handle)
     {
-        if (!IsStreaming)
+        if (!IsStreaming && _activeHandle == IntPtr.Zero)
         {
             return;
+        }
+
+        if (handle == IntPtr.Zero)
+        {
+            handle = _activeHandle;
         }
 
         _diagnostics.RecordEvent("LiveView", "Stopping live view...");
@@ -148,6 +164,12 @@ public sealed class LiveViewService : ILiveViewService, IDisposable
                 {
                     // Expected when cancelling
                 }
+                catch (Exception ex)
+                {
+                    // A failed reader must not prevent the camera-side live-view mode
+                    // from being stopped below.
+                    _diagnostics.RecordEvent("LiveView", $"Frame stream ended with an error: {ex.Message}");
+                }
             }
 
             // Stop live view on the camera
@@ -165,8 +187,6 @@ public sealed class LiveViewService : ILiveViewService, IDisposable
                     _diagnostics.RecordEvent("LiveView", $"Warning: StopLiveView returned {stopResult}, ErrCode=0x{error.ErrorCode:X}");
                 }
 
-                // Flush any remaining images from the buffer
-                FlushBuffer(handle);
             }
 
             _diagnostics.RecordEvent("LiveView", $"Live view stopped. Total frames: {_frameCount}, Avg FPS: {_currentFps:F1}");
@@ -176,6 +196,7 @@ public sealed class LiveViewService : ILiveViewService, IDisposable
             _streamCts?.Dispose();
             _streamCts = null;
             _streamTask = null;
+            _activeHandle = IntPtr.Zero;
             _fpsStopwatch.Stop();
         }
     }
@@ -247,15 +268,12 @@ public sealed class LiveViewService : ILiveViewService, IDisposable
                                     imageInfo.lFormat,
                                     DateTime.UtcNow.Ticks);
 
-                                var prevCount = _frameCount;
                                 _frameCount++;
                                 framesSinceLastUpdate++;
 
-                                // Log first 5 frames for debugging
                                 if (_frameCount <= 5)
                                 {
-                                    var subscriberCount = FrameReceived?.GetInvocationList()?.Length ?? 0;
-                                    _diagnostics.RecordEvent("LiveView", $"DIAG Frame #{_frameCount}: {imageInfo.lImagePixWidth}x{imageInfo.lImagePixHeight}, {buffer.Length} bytes, {subscriberCount} subscriber(s), prevCount={prevCount}");
+                                    _diagnostics.RecordEvent("LiveView", $"Frame #{_frameCount}: {imageInfo.lImagePixWidth}x{imageInfo.lImagePixHeight}, {buffer.Length} bytes");
                                 }
 
                                 FrameReceived?.Invoke(this, frame);
@@ -266,8 +284,11 @@ public sealed class LiveViewService : ILiveViewService, IDisposable
                             gcHandle.Free();
                         }
 
-                        // Delete the image from the buffer
-                        FujifilmSdkWrapper.XSDK_DeleteImage(handle);
+                        var deleteResult = FujifilmSdkWrapper.XSDK_DeleteImage(handle);
+                        if (deleteResult != FujifilmSdkWrapper.XSDK_COMPLETE)
+                        {
+                            _diagnostics.RecordEvent("LiveView", $"Delete live-view frame returned {deleteResult}");
+                        }
                     }
                 }
 
@@ -298,30 +319,6 @@ public sealed class LiveViewService : ILiveViewService, IDisposable
         _diagnostics.RecordEvent("LiveView", "Frame streaming loop ended");
     }
 
-    private void FlushBuffer(IntPtr handle)
-    {
-        // Read and discard any remaining images
-        int flushed = 0;
-        const int maxFlush = 100;  // Safety limit
-
-        while (flushed < maxFlush)
-        {
-            var infoResult = FujifilmSdkWrapper.XSDK_ReadImageInfo(handle, out var imageInfo);
-            if (infoResult != FujifilmSdkWrapper.XSDK_COMPLETE || imageInfo.lDataSize <= 0)
-            {
-                break;
-            }
-
-            FujifilmSdkWrapper.XSDK_DeleteImage(handle);
-            flushed++;
-        }
-
-        if (flushed > 0)
-        {
-            _diagnostics.RecordEvent("LiveView", $"Flushed {flushed} remaining frames from buffer");
-        }
-    }
-
     public void Dispose()
     {
         if (_disposed)
@@ -329,10 +326,11 @@ public sealed class LiveViewService : ILiveViewService, IDisposable
             return;
         }
 
-        _disposed = true;
+        if (_activeHandle != IntPtr.Zero)
+        {
+            StopAsync(_activeHandle).GetAwaiter().GetResult();
+        }
 
-        _streamCts?.Cancel();
-        _streamCts?.Dispose();
-        _streamCts = null;
+        _disposed = true;
     }
 }

@@ -46,6 +46,8 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
     private int _lastDynamicRangeCode;
     private int _lastApiErrorCode;
     private int _lastSdkErrorCode;
+    private int _bulbReleaseHeld;
+    private string? _connectedDeviceId;
     private FujiCameraMetadata _metadata = FujiCameraMetadata.Empty;
 
     public bool SupportsBulb => _bulbCapable;
@@ -58,6 +60,12 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
         _diagnostics.RecordEvent("Camera", $"GetCapabilitiesSnapshot: Config={(_config != null ? "Present" : "Null")} Width={sensorWidth} Height={sensorHeight}");
         var minExposure = GetMinExposureSecondsInternal();
         var maxExposure = GetMaxExposureSecondsInternal();
+        var timedMaxExposure = FujifilmShutterSpeedCatalog.GetTimedMaximum(
+            _shutterCodeToDuration,
+            _config?.DefaultMinExposure ?? DefaultMinExposureSeconds);
+        var bulbMaxExposure = _bulbCapable
+            ? _config?.DefaultMaxExposure ?? 3600.0
+            : timedMaxExposure;
         var defaultIso = SelectClosestIsoInternal(_config?.DefaultMinSensitivity ?? (isoValues.Length > 0 ? isoValues[0] : 200));
 
         return new FujiCameraCapabilities(
@@ -76,8 +84,8 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
             _lastApiErrorCode,
             _lastSdkErrorCode,
             _metadata,
-            maxExposure,
-            _bulbCapable ? 3600.0 : maxExposure);
+            timedMaxExposure,
+            bulbMaxExposure);
     }
 
     public int[] GetAvailableIsoValues()
@@ -108,6 +116,19 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
     public (int shoot, int total) GetBufferCapacity()
     {
         return (_bufferShootCapacity, _bufferTotalCapacity);
+    }
+
+    public FujiCameraCapabilities RefreshCapabilitiesSnapshot()
+    {
+        if (!IsConnected)
+        {
+            return GetCapabilitiesSnapshot();
+        }
+
+        RefreshBufferCapacity();
+        RefreshOperatingState();
+        RefreshLensMetadata();
+        return GetCapabilitiesSnapshot();
     }
 
     private int SelectClosestIsoInternal(int iso)
@@ -219,6 +240,7 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
     }
 
     public bool IsConnected => _session != null && _session.Handle != IntPtr.Zero;
+    internal string? ConnectedDeviceId => IsConnected ? _connectedDeviceId : null;
 
     /// <summary>
     /// Gets the native SDK session handle. Returns IntPtr.Zero if not connected.
@@ -275,10 +297,11 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
         }
 
         _session = await _interop.OpenCameraAsync(descriptor.DeviceId, cancellationToken).ConfigureAwait(false);
+        _connectedDeviceId = descriptor.DeviceId;
         _diagnostics.RecordEvent("Camera", $"Opened handle {_session.Handle} for {descriptor.DeviceId}");
 
-        // Give the camera a moment to settle after opening connection
-        await Task.Delay(500, cancellationToken).ConfigureAwait(false);
+        try
+        {
 
         // Give the camera a moment to settle after opening connection
         await Task.Delay(500, cancellationToken).ConfigureAwait(false);
@@ -301,6 +324,10 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
         if (_config == null)
         {
             _diagnostics.RecordEvent("Camera", $"No configuration found for camera '{descriptor.DisplayName}'. Using defaults.");
+        }
+        else if (_config.ModelName.Equals("X-T2", StringComparison.OrdinalIgnoreCase))
+        {
+            _diagnostics.RecordEvent("Camera", "X-T2 selected: using the legacy FF0002API model module. This path is experimental and battery reporting is intentionally unavailable.");
         }
 
         if (_config != null)
@@ -346,13 +373,24 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
         // Refresh lens metadata (model, aperture, focal length, capabilities)
         RefreshLensMetadata();
 
-        // Check and disable Long Exposure Noise Reduction (LENR) if enabled
-        // Do this AFTER capabilities are cached, when camera is fully initialized
-        // LENR causes the camera to take dark frames after exposures, which delays image availability
-        DisableLongExposureNoiseReduction();
+        _diagnostics.RecordEvent("Camera", "For reliable sequencing, disable Long Exposure Noise Reduction in the camera menu.");
 
         _diagnostics.RecordEvent("Camera", $"Fujifilm camera {descriptor.DisplayName} connected. ISO count={_supportedSensitivities.Count}, shutter codes={_shutterCodeToDuration.Count}, Battery={_metadata.BatteryLevel}%");
         RaisePropertyChanged(nameof(IsConnected));
+        }
+        catch
+        {
+            var failedSession = _session;
+            _session = null;
+            _connectedDeviceId = null;
+            _config = null;
+            if (failedSession != null)
+            {
+                await _interop.CloseCameraAsync(failedSession).ConfigureAwait(false);
+            }
+            RaisePropertyChanged(nameof(IsConnected));
+            throw;
+        }
     }
 
     private async Task ApplyConfigurationAsync(CameraConfig config, CancellationToken cancellationToken)
@@ -521,8 +559,8 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
 
     /// <summary>
     /// Refreshes the battery level from the camera.
-    /// The battery API is model-dependent - newer models (X-T5, X-H2, etc.) use 8 output params,
-    /// older models (X-T3, X-T4, etc.) use 6 output params.
+    /// The battery API is variadic and model-dependent. Only call signatures confirmed by
+    /// Fujifilm model headers are used; an incorrect arity can corrupt the native call frame.
     /// </summary>
     private void RefreshBatteryStatus()
     {
@@ -533,25 +571,22 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
 
         try
         {
-            // Determine if this is a "new" model (8 params) or "old" model (6 params)
-            // Based on the camera model name from metadata
-            var modelName = _metadata.ProductName?.ToUpperInvariant() ?? "";
-            bool isNewModel = modelName.Contains("X-T5") ||
-                              modelName.Contains("X-H2") ||
-                              modelName.Contains("X-S20") ||
-                              modelName.Contains("X-M5") ||
-                              modelName.Contains("GFX100II") ||
-                              modelName.Contains("GFX100SII") ||
-                              modelName.Contains("GFX100 II") ||
-                              modelName.Contains("GFX100S II");
+            var modelName = _config?.ModelName ?? _metadata.ProductName ?? string.Empty;
+            var parameterCount = FujifilmBatteryProtocol.GetParameterCount(modelName);
+            if (parameterCount == null)
+            {
+                _metadata.BatteryLevel = -1;
+                _metadata.BatteryStatus = "Unavailable";
+                _diagnostics.RecordEvent("Camera", $"Battery query skipped for '{modelName}': the SDK argument layout has not been verified for this model.");
+                return;
+            }
 
             int result;
-            long bodyBatteryInfo, gripBatteryInfo, gripBattery2Info;
-            long bodyBatteryRatio, gripBatteryRatio, gripBattery2Ratio;
+            int bodyBatteryInfo, gripBatteryInfo, gripBattery2Info;
+            int bodyBatteryRatio, gripBatteryRatio, gripBattery2Ratio;
 
-            if (isNewModel)
+            if (parameterCount == FujifilmBatteryProtocol.NewModelParameterCount)
             {
-                // Use 8-parameter version for newer models
                 result = FujifilmSdkWrapper.XSDK_GetProp_Battery8(
                     _session.Handle,
                     FujifilmSdkWrapper.API_CODE_CheckBatteryInfo,
@@ -569,7 +604,6 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
             }
             else
             {
-                // Use 6-parameter version for older models
                 result = FujifilmSdkWrapper.XSDK_GetProp_Battery6(
                     _session.Handle,
                     FujifilmSdkWrapper.API_CODE_CheckBatteryInfo,
@@ -685,7 +719,7 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
                 _session.Handle,
                 FujifilmSdkWrapper.API_CODE_GetAperture,
                 FujifilmSdkWrapper.API_PARAM_Aperture,
-                out long apertureValue);
+                out int apertureValue);
 
             if (apertureResult == FujifilmSdkWrapper.XSDK_COMPLETE)
             {
@@ -727,7 +761,7 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
                 _session.Handle,
                 FujifilmSdkWrapper.API_CODE_GetLensZoomPos,
                 FujifilmSdkWrapper.API_PARAM_LensZoomPos,
-                out long zoomPos);
+                out int zoomPos);
 
             if (zoomResult != FujifilmSdkWrapper.XSDK_COMPLETE)
             {
@@ -794,157 +828,6 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
             _diagnostics.RecordEvent("Camera", $"Zoom position refresh error: {ex.Message}");
         }
     }
-
-    #region Bracketing/Drive Mode Control
-
-    /// <summary>
-    /// Gets the current drive mode (bracketing mode).
-    /// </summary>
-    public BracketingMode GetDriveMode()
-    {
-        if (_session == null || _session.Handle == IntPtr.Zero)
-        {
-            return BracketingMode.Off;
-        }
-
-        try
-        {
-            var result = FujifilmSdkWrapper.XSDK_GetProp(
-                _session.Handle,
-                FujifilmSdkWrapper.API_CODE_GetDriveMode,
-                FujifilmSdkWrapper.API_PARAM_DriveMode,
-                out long modeValue);
-
-            if (result == FujifilmSdkWrapper.XSDK_COMPLETE)
-            {
-                var mode = (BracketingMode)(int)modeValue;
-                _diagnostics.RecordEvent("Camera", $"Current drive mode: {mode.GetDisplayName()} (0x{(int)mode:X4})");
-                return mode;
-            }
-            else
-            {
-                var error = FujifilmSdkWrapper.GetLastError(_session.Handle);
-                _diagnostics.RecordEvent("Camera", $"GetDriveMode failed (result={result}, ErrCode=0x{error.ErrorCode:X})");
-            }
-        }
-        catch (Exception ex)
-        {
-            _diagnostics.RecordEvent("Camera", $"GetDriveMode error: {ex.Message}");
-        }
-
-        return BracketingMode.Off;
-    }
-
-    /// <summary>
-    /// Sets the drive mode (bracketing mode).
-    /// </summary>
-    public bool SetDriveMode(BracketingMode mode)
-    {
-        if (_session == null || _session.Handle == IntPtr.Zero)
-        {
-            _diagnostics.RecordEvent("Camera", "SetDriveMode: Camera not connected");
-            return false;
-        }
-
-        try
-        {
-            _diagnostics.RecordEvent("Camera", $"Setting drive mode to: {mode.GetDisplayName()} (0x{(int)mode:X4})");
-
-            var result = FujifilmSdkWrapper.XSDK_SetProp(
-                _session.Handle,
-                FujifilmSdkWrapper.API_CODE_SetDriveMode,
-                FujifilmSdkWrapper.API_PARAM_DriveMode,
-                (int)mode);
-
-            if (result == FujifilmSdkWrapper.XSDK_COMPLETE)
-            {
-                _diagnostics.RecordEvent("Camera", $"Drive mode set successfully to {mode.GetDisplayName()}");
-                return true;
-            }
-            else
-            {
-                var error = FujifilmSdkWrapper.GetLastError(_session.Handle);
-                _diagnostics.RecordEvent("Camera", $"SetDriveMode failed (result={result}, ErrCode=0x{error.ErrorCode:X}). Mode may not be supported by this camera.");
-                return false;
-            }
-        }
-        catch (Exception ex)
-        {
-            _diagnostics.RecordEvent("Camera", $"SetDriveMode error: {ex.Message}");
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Gets the list of drive modes supported by the connected camera.
-    /// </summary>
-    public IReadOnlyList<BracketingMode> GetSupportedDriveModes()
-    {
-        if (_session == null || _session.Handle == IntPtr.Zero)
-        {
-            return Array.Empty<BracketingMode>();
-        }
-
-        try
-        {
-            // First call: get count
-            var countResult = FujifilmSdkWrapper.XSDK_CapProp(
-                _session.Handle,
-                FujifilmSdkWrapper.API_CODE_CapDriveMode,
-                0,  // API param for count query
-                out int count,
-                IntPtr.Zero);
-
-            if (countResult != FujifilmSdkWrapper.XSDK_COMPLETE || count <= 0)
-            {
-                _diagnostics.RecordEvent("Camera", $"CapDriveMode query failed or returned 0 modes (result={countResult}, count={count})");
-                return Array.Empty<BracketingMode>();
-            }
-
-            // Second call: get data
-            var bufferSize = count * sizeof(int);
-            var buffer = Marshal.AllocHGlobal(bufferSize);
-            try
-            {
-                var dataResult = FujifilmSdkWrapper.XSDK_CapProp(
-                    _session.Handle,
-                    FujifilmSdkWrapper.API_CODE_CapDriveMode,
-                    1,  // API param for data query
-                    out count,
-                    buffer);
-
-                if (dataResult != FujifilmSdkWrapper.XSDK_COMPLETE)
-                {
-                    _diagnostics.RecordEvent("Camera", $"CapDriveMode data query failed (result={dataResult})");
-                    return Array.Empty<BracketingMode>();
-                }
-
-                var modes = new List<BracketingMode>(count);
-                for (int i = 0; i < count; i++)
-                {
-                    var modeValue = Marshal.ReadInt32(buffer, i * sizeof(int));
-                    if (Enum.IsDefined(typeof(BracketingMode), modeValue))
-                    {
-                        modes.Add((BracketingMode)modeValue);
-                    }
-                }
-
-                _diagnostics.RecordEvent("Camera", $"Supported drive modes: {string.Join(", ", modes.Select(m => m.GetDisplayName()))}");
-                return modes;
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(buffer);
-            }
-        }
-        catch (Exception ex)
-        {
-            _diagnostics.RecordEvent("Camera", $"GetSupportedDriveModes error: {ex.Message}");
-            return Array.Empty<BracketingMode>();
-        }
-    }
-
-    #endregion
 
     private IReadOnlyList<int> QuerySensitivityValues()
     {
@@ -1018,21 +901,14 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
         FujifilmSdkWrapper.CheckResult(_session.Handle, countResult, nameof(FujifilmSdkWrapper.XSDK_CapShutterSpeed));
         bool sdkBulbCapable = bulbCapable != 0; // Store SDK result temporarily
 
-        // Apply fallback logic: if SDK says no but config says yes, use config (same as ASCOM driver)
-        if (!sdkBulbCapable && _config?.DefaultBulbCapable == true)
-        {
-            _diagnostics.RecordEvent("Camera", $"WARNING: SDK reported Bulb NOT capable, but config default is TRUE. Using config default.");
-            _bulbCapable = true; // Override with config default
-        }
-        else
-        {
-            _bulbCapable = sdkBulbCapable; // Use SDK value
-        }
+        _bulbCapable = sdkBulbCapable;
         _diagnostics.RecordEvent("Camera", $"Bulb capability: SDK={sdkBulbCapable}, Config={_config?.DefaultBulbCapable}, Final={_bulbCapable}");
 
         if (count == 0)
         {
-            // If SDK query fails or returns 0 codes, fall back to config default for bulb capability
+            // If the SDK returns no timed shutter codes at all, keep the conservative
+            // model default as a last-resort bulb hint. An explicit SDK "not bulb
+            // capable" result above is not overridden.
             if (_config?.DefaultBulbCapable == true)
             {
                 _bulbCapable = true;
@@ -1066,81 +942,12 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
 
     private IReadOnlyDictionary<int, double> BuildShutterSpeedDictionary(IReadOnlyList<int> shutterCodes)
     {
-        var map = new Dictionary<int, double>();
-        
-        // First, populate the universal hardcoded map from SDK PDF (same as ASCOM driver)
-        // This map is consistent across all Fujifilm cameras and is based on SDK documentation
-        PopulateUniversalShutterSpeedMap(map);
-        
-        // Then, add entries from config map if available (config takes precedence for any overrides)
-        // Note: Config maps are typically minimal and may only have a few entries
-        if (_config?.ShutterSpeedMap != null && _config.ShutterSpeedMap.Count > 0)
-        {
-            foreach (var mapping in _config.ShutterSpeedMap)
-            {
-                map[mapping.SdkCode] = mapping.Duration;
-            }
-        }
-
-        // Finally, ensure all queried codes have mappings (should already be in universal map)
-        // Only calculate as fallback for codes not in universal or config maps
-        foreach (var code in shutterCodes)
-        {
-            if (code <= 0)
-            {
-                continue;
-            }
-
-            // Only calculate if not already in map (from universal or config)
-            if (!map.ContainsKey(code))
-            {
-                // Fallback: calculate as 1.0/code for codes not in any map
-                // This should rarely happen if universal map is complete
-                map[code] = 1.0 / code;
-            }
-        }
-
-        if (!map.ContainsKey(FujifilmSdkWrapper.XSDK_SHUTTER_BULB))
-        {
-            map[FujifilmSdkWrapper.XSDK_SHUTTER_BULB] = _config?.DefaultMaxExposure ?? 3600.0;
-        }
-
-        return map;
-    }
-
-    private static void PopulateUniversalShutterSpeedMap(Dictionary<int, double> map)
-    {
-        // Universal shutter speed mappings based on SDK PDF pp. 91-95
-        // These mappings are consistent across all Fujifilm cameras
-        // Same as ASCOM driver's PopulateShutterSpeedMaps()
-        map[5] = 1.0 / 180000.0; map[6] = 1.0 / 160000.0; map[7] = 1.0 / 128000.0;
-        map[9] = 1.0 / 102400.0; map[12] = 1.0 / 80000.0; map[15] = 1.0 / 64000.0;
-        map[19] = 1.0 / 51200.0; map[24] = 1.0 / 40000.0; map[30] = 1.0 / 32000.0;
-        map[38] = 1.0 / 25600.0; map[43] = 1.0 / 24000.0; map[48] = 1.0 / 20000.0;
-        map[61] = 1.0 / 16000.0; map[76] = 1.0 / 12800.0; map[86] = 1.0 / 12000.0;
-        map[96] = 1.0 / 10000.0; map[122] = 1.0 / 8000.0; map[153] = 1.0 / 6400.0;
-        map[172] = 1.0 / 6000.0; map[193] = 1.0 / 5000.0; map[244] = 1.0 / 4000.0;
-        map[307] = 1.0 / 3200.0; map[345] = 1.0 / 3000.0; map[387] = 1.0 / 2500.0;
-        map[488] = 1.0 / 2000.0; map[615] = 1.0 / 1600.0; map[690] = 1.0 / 1500.0;
-        map[775] = 1.0 / 1250.0; map[976] = 1.0 / 1000.0; map[1230] = 1.0 / 800.0;
-        map[1381] = 1.0 / 750.0; map[1550] = 1.0 / 640.0; map[1953] = 1.0 / 500.0;
-        map[2460] = 1.0 / 400.0; map[2762] = 1.0 / 350.0; map[3100] = 1.0 / 320.0;
-        map[3906] = 1.0 / 250.0; map[4921] = 1.0 / 200.0; map[5524] = 1.0 / 180.0;
-        map[6200] = 1.0 / 160.0; map[7812] = 1.0 / 125.0; map[9843] = 1.0 / 100.0;
-        map[11048] = 1.0 / 90.0; map[12401] = 1.0 / 80.0; map[15625] = 1.0 / 60.0;
-        map[19686] = 1.0 / 50.0; map[22097] = 1.0 / 45.0; map[24803] = 1.0 / 40.0;
-        map[31250] = 1.0 / 30.0; map[39372] = 1.0 / 25.0; map[49606] = 1.0 / 20.0;
-        map[62500] = 1.0 / 15.0; map[78745] = 1.0 / 13.0; map[99212] = 1.0 / 10.0;
-        map[125000] = 1.0 / 8.0; map[157490] = 1.0 / 6.0; map[198425] = 1.0 / 5.0;
-        map[250000] = 1.0 / 4.0; map[314980] = 1.0 / 3.0; map[396850] = 1.0 / 2.5;
-        map[500000] = 1.0 / 2.0; map[629960] = 1.0 / 1.6; map[707106] = 1.0 / 1.5;
-        map[793700] = 1.0 / 1.3; map[1000000] = 1.0; map[1259921] = 1.3;
-        map[1414213] = 1.5; map[1587401] = 1.6; map[2000000] = 2.0;
-        map[2519842] = 2.5; map[3174802] = 3.0; map[4000000] = 4.0;
-        map[5039684] = 5.0; map[6349604] = 6.0; map[8000000] = 8.0;
-        map[10079368] = 10.0; map[12699208] = 13.0; map[16000000] = 15.0;
-        map[20158736] = 20.0; map[25398416] = 25.0; map[32000000] = 30.0;
-        map[64000000] = 60.0;
+        return FujifilmShutterSpeedCatalog.Build(
+            shutterCodes,
+            _config?.ShutterSpeedMap,
+            _bulbCapable,
+            _config?.DefaultMaxExposure ?? 3600.0,
+            code => _diagnostics.RecordEvent("Camera", $"SDK reported undocumented shutter code {code}; ignoring it instead of guessing its duration."));
     }
 
     public async Task<RawCaptureResult> CaptureRawAsync(double exposureSeconds, int iso, CancellationToken cancellationToken)
@@ -1185,102 +992,8 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
         {
             _diagnostics.RecordEvent("Camera", $"Re-queried shutter codes after ISO change: {currentShutterCodes.Count} codes available");
             _supportedShutterCodes = currentShutterCodes;
-            // Rebuild duration map with current codes, but preserve config mappings
-            // This ensures config entries (like code 1 = 1.0s) are available even if not in queried codes
-            var newDurationMap = new Dictionary<int, double>(BuildShutterSpeedDictionary(currentShutterCodes));
-            if (newDurationMap.Count > 0)
-            {
-                // Merge with existing map to preserve config entries that might not be in newly queried codes
-                // This is important because config has correct mappings (e.g., code 1 = 1.0s)
-                foreach (var existingEntry in _shutterCodeToDuration)
-                {
-                    // Preserve config entries (from original map) even if not in newly queried codes
-                    // This allows us to find alternatives using config mappings
-                    if (!newDurationMap.ContainsKey(existingEntry.Key))
-                    {
-                        // Only preserve if it's likely a config entry (has a reasonable duration mapping)
-                        // Config entries typically have durations that don't match simple 1.0/code calculation
-                        var calculatedDuration = existingEntry.Key > 0 ? 1.0 / existingEntry.Key : 0;
-                        var diff = Math.Abs(existingEntry.Value - calculatedDuration);
-                        // If the duration differs significantly from calculated, it's likely a config entry
-                        if (diff > 0.001 || existingEntry.Key <= 0)
-                        {
-                            newDurationMap[existingEntry.Key] = existingEntry.Value;
-                        }
-                    }
-                }
-                _shutterCodeToDuration = newDurationMap;
-                _diagnostics.RecordEvent("Camera", $"Rebuilt duration map with {newDurationMap.Count} entries (preserved config mappings)");
-            }
-        }
-
-        // Validate shutter code against currently supported codes
-        if (shutterCode != FujifilmSdkWrapper.XSDK_SHUTTER_BULB && _supportedShutterCodes.Count > 0)
-        {
-            if (!_supportedShutterCodes.Contains(shutterCode))
-            {
-                _diagnostics.RecordEvent("Camera", $"WARNING: Shutter code {shutterCode} not in supported list. Attempting to find closest valid code...");
-                _diagnostics.RecordEvent("Camera", $"Requested duration: {exposureSeconds}s, Available codes in duration map: {_shutterCodeToDuration.Count}, Supported codes: {_supportedShutterCodes.Count}");
-                
-                // Log some sample codes and durations for debugging
-                var sampleCodes = _shutterCodeToDuration
-                    .Where(pair => _supportedShutterCodes.Contains(pair.Key) && pair.Key > 0)
-                    .OrderBy(pair => Math.Abs(pair.Value - exposureSeconds))
-                    .Take(5)
-                    .ToList();
-                if (sampleCodes.Count > 0)
-                {
-                    var sampleStr = string.Join(", ", sampleCodes.Select(c => $"code {c.Key}={c.Value:F6}s"));
-                    _diagnostics.RecordEvent("Camera", $"Sample supported codes near {exposureSeconds}s: {sampleStr}");
-                }
-                
-                // First, try to find the closest code to the requested duration (prefer codes close to requested)
-                // Use a tolerance of 20% to prefer reasonably close matches
-                var tolerance = exposureSeconds * 0.2;
-                var closeCodes = _shutterCodeToDuration
-                    .Where(pair => _supportedShutterCodes.Contains(pair.Key) && pair.Key > 0 && Math.Abs(pair.Value - exposureSeconds) <= tolerance)
-                    .OrderBy(pair => Math.Abs(pair.Value - exposureSeconds))
-                    .FirstOrDefault();
-                
-                if (closeCodes.Key != 0)
-                {
-                    _diagnostics.RecordEvent("Camera", $"Using close match shutter code {closeCodes.Key} (duration={closeCodes.Value}s, diff={Math.Abs(closeCodes.Value - exposureSeconds):F4}s) instead of {shutterCode}");
-                    shutterCode = closeCodes.Key;
-                }
-                else
-                {
-                    // If no close match, try to find codes <= requested (prefer not to over-expose)
-                    var validCodes = _shutterCodeToDuration
-                        .Where(pair => _supportedShutterCodes.Contains(pair.Key) && pair.Value <= exposureSeconds + 1e-6 && pair.Key > 0)
-                        .OrderByDescending(pair => pair.Value)
-                        .FirstOrDefault();
-                    
-                    if (validCodes.Key != 0)
-                    {
-                        _diagnostics.RecordEvent("Camera", $"Using alternative shutter code {validCodes.Key} (duration={validCodes.Value}s) <= requested {exposureSeconds}s instead of {shutterCode}");
-                        shutterCode = validCodes.Key;
-                    }
-                    else
-                    {
-                        // Last resort: find closest code overall (may over-expose)
-                        _diagnostics.RecordEvent("Camera", $"No code found <= {exposureSeconds}s. Searching for closest code overall...");
-                        var closestCode = _shutterCodeToDuration
-                            .Where(pair => _supportedShutterCodes.Contains(pair.Key) && pair.Key > 0)
-                            .OrderBy(pair => Math.Abs(pair.Value - exposureSeconds))
-                            .FirstOrDefault();
-                        
-                        if (closestCode.Key != 0)
-                        {
-                            _diagnostics.RecordEvent("Camera", $"Using closest available code {closestCode.Key} (duration={closestCode.Value}s, diff={Math.Abs(closestCode.Value - exposureSeconds):F4}s) instead of {shutterCode}");
-                            shutterCode = closestCode.Key;
-                        }
-                        else
-                        {
-                            _diagnostics.RecordEvent("Camera", $"No valid alternative found. Proceeding with code {shutterCode} (may fail if invalid for current state)");
-                        }
-                    }
-                }
-            }
+            _shutterCodeToDuration = BuildShutterSpeedDictionary(currentShutterCodes);
+            shutterCode = ResolveShutterCode(exposureSeconds);
         }
 
         // Set Shutter Speed
@@ -1397,11 +1110,7 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
                     
                     _diagnostics.RecordEvent("Camera", "CRITICAL TIP: Ensure the physical Shutter Speed dial is set to 'T' (Time) or 'A' (Auto) to allow software control.");
                     _diagnostics.RecordEvent("Camera", "Also ensure camera is in Manual (M) mode and that the requested shutter speed is valid for current ISO/Dynamic Range combination.");
-                    _diagnostics.RecordEvent("Camera", "Falling back to current physical dial setting...");
-                    
-                    // We can't set it, so we break and hope the user has set it manually or will see the error
-                    // We don't throw here to allow the exposure to proceed with whatever is on the dial, 
-                    // but we logged the critical warning.
+                    _diagnostics.RecordEvent("Camera", "The exposure will be aborted because the requested shutter setting could not be applied.");
                     break; 
                 }
                 else
@@ -1412,6 +1121,12 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
             }
         }
 
+        if (!shutterSet)
+        {
+            throw new InvalidOperationException(
+                $"The camera rejected shutter code {shutterCode} for {exposureSeconds:0.###} seconds. " +
+                "Set the physical shutter dial to T, use Manual exposure mode, and retry. The exposure was not triggered.");
+        }
 
         if (shutterCode != FujifilmSdkWrapper.XSDK_SHUTTER_BULB)
         {
@@ -1432,41 +1147,10 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
     private int ResolveShutterCode(double exposureSeconds)
     {
         _diagnostics.RecordEvent("Camera", $"ResolveShutterCode: Requested duration={exposureSeconds}s, ShutterCodeToDuration has {_shutterCodeToDuration.Count} entries");
-        
-        // Maximum programmable exposure is 60 seconds (code 64000000)
-        // Exposures longer than 60s require BULB mode
-        const double maxProgrammableExposure = 60.0;
-        
-        if (exposureSeconds > maxProgrammableExposure)
-        {
-            if (!_bulbCapable)
-            {
-                _diagnostics.RecordEvent("Camera", $"ResolveShutterCode: Requested {exposureSeconds}s > {maxProgrammableExposure}s, but camera does not support BULB");
-                throw new InvalidOperationException($"Exposure duration {exposureSeconds}s exceeds maximum programmable exposure ({maxProgrammableExposure}s) and camera does not support BULB mode.");
-            }
-            _diagnostics.RecordEvent("Camera", $"ResolveShutterCode: Requested {exposureSeconds}s > {maxProgrammableExposure}s, using BULB mode");
-            return FujifilmSdkWrapper.XSDK_SHUTTER_BULB;
-        }
-        
-        if (_shutterCodeToDuration.Count == 0)
-        {
-            _diagnostics.RecordEvent("Camera", "ResolveShutterCode: No shutter speed map available, defaulting to BULB");
-            return FujifilmSdkWrapper.XSDK_SHUTTER_BULB;
-        }
-
-        var closest = _shutterCodeToDuration
-            .Where(pair => pair.Key != FujifilmSdkWrapper.XSDK_SHUTTER_BULB && pair.Value <= exposureSeconds + 1e-6)
-            .OrderByDescending(pair => pair.Value)
-            .FirstOrDefault();
-
-        if (closest.Key == 0)
-        {
-            _diagnostics.RecordEvent("Camera", "ResolveShutterCode: No suitable code found, using BULB");
-            return FujifilmSdkWrapper.XSDK_SHUTTER_BULB;
-        }
-
-        _diagnostics.RecordEvent("Camera", $"ResolveShutterCode: Selected code={closest.Key} for duration={closest.Value}s (requested {exposureSeconds}s)");
-        return closest.Key;
+        var code = FujifilmShutterSpeedCatalog.SelectCode(_shutterCodeToDuration, exposureSeconds, _bulbCapable);
+        var selectedDuration = _shutterCodeToDuration.GetValueOrDefault(code, exposureSeconds);
+        _diagnostics.RecordEvent("Camera", $"ResolveShutterCode: Selected code={code} for duration={selectedDuration}s (requested {exposureSeconds}s)");
+        return code;
     }
 
     public async Task StopExposureAsync()
@@ -1476,20 +1160,18 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
             return;
         }
 
-        // Only send stop commands if we're actually in an exposure
-        // Note: For bulb exposures, the stop command is already sent by ExecuteBulbExposureAsync
-        // For timed exposures, we can't actually stop them mid-exposure (camera limitation)
-        // So we only send the bulb stop command as a safety measure
-        await Task.Run(() =>
+        if (Interlocked.Exchange(ref _bulbReleaseHeld, 0) == 1)
         {
-            // Only send bulb stop command - sending SHOOT_S1OFF would trigger a new exposure!
-            // The ASCOM driver doesn't support StopExposure for this reason
-            IssueReleaseCommand(FujifilmSdkWrapper.XSDK_RELEASE_N_BULBS1OFF, "Stop exposure (bulb safety)");
-            // DO NOT send XSDK_RELEASE_SHOOT_S1OFF here - it would trigger a new timed exposure!
-        }).ConfigureAwait(false);
+            IssueReleaseCommand(FujifilmSdkWrapper.XSDK_RELEASE_N_BULBS1OFF, "Stop active bulb exposure");
+        }
+        else
+        {
+            _diagnostics.RecordEvent("Camera", "StopExposure requested with no active bulb release. Timed exposures cannot be interrupted by this SDK.");
+        }
 
         RefreshBufferCapacity();
         RefreshOperatingState();
+        await Task.CompletedTask;
     }
 
     private async Task ExecuteTimedExposureAsync(double exposureSeconds, CancellationToken cancellationToken)
@@ -1511,35 +1193,30 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
             return;
         }
 
-        // Bulb sequence: S1ON -> Delay -> BULBS2_ON (same as ASCOM driver)
-        // 1. Press Halfway (S1ON)
         _diagnostics.RecordEvent("Camera", "Starting bulb exposure sequence: S1ON");
         IssueReleaseCommand(FujifilmSdkWrapper.XSDK_RELEASE_S1ON, "Bulb S1ON");
-        
-        // Delay between S1ON and BULBS2_ON (500ms as per ASCOM driver)
-        // User setting delay is additional if specified
-        const int baseDelayMs = 500;
-        var userDelay = Math.Max(0, _settingsProvider.Settings.BulbReleaseDelayMs);
-        var totalDelay = baseDelayMs + userDelay;
-        _diagnostics.RecordEvent("Camera", $"Delay between S1ON and BULBS2_ON: {totalDelay}ms (base={baseDelayMs}ms, user={userDelay}ms)");
-        await Task.Delay(TimeSpan.FromMilliseconds(totalDelay), cancellationToken).ConfigureAwait(false);
-        
-        // 2. Start Bulb (BULBS2_ON)
-        _diagnostics.RecordEvent("Camera", "Starting bulb exposure: BULBS2_ON");
-        IssueReleaseCommand(FujifilmSdkWrapper.XSDK_RELEASE_BULBS2_ON, "Bulb start");
+        Interlocked.Exchange(ref _bulbReleaseHeld, 1);
 
-        // Wait for the requested exposure duration
-        _diagnostics.RecordEvent("Camera", $"Waiting for bulb exposure duration: {exposureSeconds}s");
-        await Task.Delay(TimeSpan.FromSeconds(exposureSeconds), cancellationToken).ConfigureAwait(false);
-        
-        // Add delay before sending stop command (same as ASCOM driver)
-        // This gives the camera time to process the exposure before stopping
-        _diagnostics.RecordEvent("Camera", "Adding delay before sending bulb stop command...");
-        await Task.Delay(500, cancellationToken).ConfigureAwait(false);
-        
-        // Stop bulb exposure
-        _diagnostics.RecordEvent("Camera", "Stopping bulb exposure: BULBS1OFF");
-        IssueReleaseCommand(FujifilmSdkWrapper.XSDK_RELEASE_N_BULBS1OFF, "Bulb stop");
+        try
+        {
+            var releaseDelay = Math.Clamp(_settingsProvider.Settings.BulbReleaseDelayMs, 0, 5000);
+            _diagnostics.RecordEvent("Camera", $"Delay between S1ON and BULBS2_ON: {releaseDelay}ms");
+            await Task.Delay(TimeSpan.FromMilliseconds(releaseDelay), cancellationToken).ConfigureAwait(false);
+
+            _diagnostics.RecordEvent("Camera", "Starting bulb exposure: BULBS2_ON");
+            IssueReleaseCommand(FujifilmSdkWrapper.XSDK_RELEASE_BULBS2_ON, "Bulb start");
+
+            _diagnostics.RecordEvent("Camera", $"Waiting for bulb exposure duration: {exposureSeconds}s");
+            await Task.Delay(TimeSpan.FromSeconds(exposureSeconds), cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (Interlocked.Exchange(ref _bulbReleaseHeld, 0) == 1)
+            {
+                _diagnostics.RecordEvent("Camera", "Stopping bulb exposure: BULBS1OFF");
+                IssueReleaseCommand(FujifilmSdkWrapper.XSDK_RELEASE_N_BULBS1OFF, "Bulb stop");
+            }
+        }
         
         // Add delay after stop command to allow camera to process
         // The camera needs time to finalize the exposure and prepare image data
@@ -1573,6 +1250,19 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
 
             if (info.lDataSize > 0)
             {
+                if (info.lFormat != FujifilmSdkWrapper.XSDK_IMAGEFORMAT_RAW)
+                {
+                    _diagnostics.RecordEvent("Camera", $"Discarding non-RAW image from camera (format={info.lFormat}, bytes={info.lDataSize}). Set IMAGE QUALITY to RAW or RAW+JPEG.");
+                    var deleteNonRawResult = FujifilmSdkWrapper.XSDK_DeleteImage(_session.Handle);
+                    if (deleteNonRawResult != FujifilmSdkWrapper.XSDK_COMPLETE)
+                    {
+                        _diagnostics.RecordEvent("Camera", $"XSDK_DeleteImage for non-RAW frame returned {deleteNonRawResult}");
+                    }
+
+                    await Task.Delay(TimeSpan.FromMilliseconds(pollIntervalMs), cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
                 var buffer = new byte[info.lDataSize];
                 var handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
                 try
@@ -1600,7 +1290,7 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
             RefreshOperatingState();
         }
 
-        throw new TimeoutException($"Timed out waiting for Fujifilm image data after exposure. Polled for {maxAttempts * pollIntervalMs / 1000.0}s.");
+        throw new TimeoutException($"Timed out waiting for Fujifilm RAW image data after exposure. Ensure IMAGE QUALITY is set to RAW or RAW+JPEG. Polled for {maxAttempts * pollIntervalMs / 1000.0}s.");
     }
 
     private void IssueReleaseCommand(int releaseMode, string context)
@@ -1610,23 +1300,21 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
             return;
         }
 
-        IntPtr shotOptPtr = Marshal.AllocHGlobal(sizeof(long));
+        IntPtr shotOptPtr = Marshal.AllocHGlobal(sizeof(int));
         try
         {
-            Marshal.WriteInt64(shotOptPtr, 0L);
+            Marshal.WriteInt32(shotOptPtr, 0);
             var releaseResult = FujifilmSdkWrapper.XSDK_Release(_session.Handle, releaseMode, shotOptPtr, out var status);
             if (releaseResult != FujifilmSdkWrapper.XSDK_COMPLETE)
             {
                 _diagnostics.RecordEvent("Camera", $"{context} failed (result={releaseResult}, status={status})");
+                var error = FujifilmSdkWrapper.GetLastError(_session.Handle);
+                throw new FujifilmSdkException(nameof(FujifilmSdkWrapper.XSDK_Release), releaseResult, error.ApiCode, error.ErrorCode);
             }
             else
             {
                 _diagnostics.RecordEvent("Camera", $"{context} succeeded (status={status})");
             }
-        }
-        catch (Exception ex)
-        {
-            _diagnostics.RecordEvent("Camera", $"{context} exception: {ex.Message}");
         }
         finally
         {
@@ -1641,6 +1329,7 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
             _diagnostics.RecordEvent("Camera", $"Closing camera session {_session.Handle}");
             await _interop.CloseCameraAsync(_session).ConfigureAwait(false);
             _session = null;
+            _connectedDeviceId = null;
             _config = null;
             _supportedSensitivities = Array.Empty<int>();
             _shutterCodeToDuration = new Dictionary<int, double>();
@@ -1654,236 +1343,6 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
     public async ValueTask DisposeAsync()
     {
         await DisconnectAsync().ConfigureAwait(false);
-    }
-
-    private void DisableLongExposureNoiseReduction()
-    {
-        if (_session == null || _session.Handle == IntPtr.Zero)
-        {
-            return;
-        }
-
-        try
-        {
-            // Get API codes from device info or use lookup
-            // The API codes are model-specific: <model>_API_CODE_GetLongExposureNR, etc.
-            // For now, we'll try to get them from GetDeviceInfoEx or use a lookup approach
-            
-            // Try to get current LENR setting
-            // Note: API codes need to be obtained from XSDK_GetDeviceInfoEx or from model-specific headers
-            // For GFX100S and other models, we need the actual API codes
-            
-            // Since we don't have direct access to the header files, we'll need to:
-            // 1. Get API codes from XSDK_GetDeviceInfoEx (which lists all supported APIs)
-            // 2. Or use a lookup table based on model name
-            // 3. Or add them to config JSON files
-            
-            // For now, let's try a lookup approach for known models
-            var modelName = _config?.ModelName ?? string.Empty;
-            if (string.IsNullOrEmpty(modelName))
-            {
-                _diagnostics.RecordEvent("Camera", "Cannot check LENR: Model name not available");
-                return;
-            }
-
-            // Try dynamic approach first: get API codes from GetDeviceInfoEx
-            var apiCodes = GetLongExposureNrApiCodesFromDeviceInfo(modelName);
-            
-            // Fallback to lookup table if dynamic approach failed
-            if (apiCodes == null)
-            {
-                _diagnostics.RecordEvent("Camera", $"Dynamic API code lookup failed for '{modelName}'. Trying lookup table...");
-                apiCodes = GetLongExposureNrApiCodesFromLookup(modelName);
-            }
-
-            if (apiCodes == null)
-            {
-                _diagnostics.RecordEvent("Camera", $"LENR API codes not available for model '{modelName}'. Skipping LENR check. User should manually disable LENR in camera settings.");
-                return;
-            }
-
-            // Check current LENR setting
-            var getResult = FujifilmSdkWrapper.XSDK_GetProp(_session.Handle, apiCodes.Value.GetApiCode, apiCodes.Value.GetApiParam, out long currentValue);
-            if (getResult != FujifilmSdkWrapper.XSDK_COMPLETE)
-            {
-                var error = FujifilmSdkWrapper.GetLastError(_session.Handle);
-                _diagnostics.RecordEvent("Camera", $"Could not get LENR setting (result={getResult}, ApiCode=0x{error.ApiCode:X}, ErrCode=0x{error.ErrorCode:X}). LENR may not be supported or API codes incorrect.");
-                return;
-            }
-
-            // Check if LENR is ON (typically 1) or OFF (typically 0)
-            // According to SDK: <model>_ON = ON, <model>_OFF = OFF
-            // We need to determine which value means ON/OFF - typically 1 = ON, 0 = OFF
-            const long LENR_OFF = 0; // OFF value
-            const long LENR_ON = 1;   // ON value
-
-            if (currentValue == LENR_ON)
-            {
-                _diagnostics.RecordEvent("Camera", $"Long Exposure Noise Reduction is ON. Disabling it...");
-                var setResult = FujifilmSdkWrapper.XSDK_SetProp(_session.Handle, apiCodes.Value.SetApiCode, apiCodes.Value.SetApiParam, LENR_OFF);
-                if (setResult == FujifilmSdkWrapper.XSDK_COMPLETE)
-                {
-                    _diagnostics.RecordEvent("Camera", "Long Exposure Noise Reduction disabled successfully.");
-                }
-                else
-                {
-                    var error = FujifilmSdkWrapper.GetLastError(_session.Handle);
-                    _diagnostics.RecordEvent("Camera", $"Failed to disable LENR (result={setResult}, ApiCode=0x{error.ApiCode:X}, ErrCode=0x{error.ErrorCode:X})");
-                }
-            }
-            else
-            {
-                _diagnostics.RecordEvent("Camera", $"Long Exposure Noise Reduction is already OFF (value={currentValue}).");
-            }
-        }
-        catch (Exception ex)
-        {
-            _diagnostics.RecordEvent("Camera", $"Error checking/disabling LENR: {ex.Message}");
-            // Don't throw - LENR control is optional
-        }
-    }
-
-    private (int GetApiCode, int GetApiParam, int SetApiCode, int SetApiParam)? GetLongExposureNrApiCodesFromDeviceInfo(string modelName)
-    {
-        if (_session == null || _session.Handle == IntPtr.Zero)
-        {
-            return null;
-        }
-
-        try
-        {
-            // Step 1: Get count of API codes
-            var countResult = FujifilmSdkWrapper.XSDK_GetDeviceInfoEx(_session.Handle, out var deviceInfo, out int apiCount, IntPtr.Zero);
-            if (countResult != FujifilmSdkWrapper.XSDK_COMPLETE || apiCount <= 0)
-            {
-                _diagnostics.RecordEvent("Camera", $"GetDeviceInfoEx returned no API codes (result={countResult}, count={apiCount})");
-                return null;
-            }
-
-            // Step 2: Allocate buffer and get API codes
-            var bufferSize = apiCount * sizeof(int);
-            var apiCodeBuffer = Marshal.AllocHGlobal(bufferSize);
-            try
-            {
-                var dataResult = FujifilmSdkWrapper.XSDK_GetDeviceInfoEx(_session.Handle, out deviceInfo, out apiCount, apiCodeBuffer);
-                if (dataResult != FujifilmSdkWrapper.XSDK_COMPLETE)
-                {
-                    _diagnostics.RecordEvent("Camera", $"GetDeviceInfoEx (get data) failed (result={dataResult})");
-                    return null;
-                }
-
-                // Read API codes from buffer
-                var apiCodes = new int[apiCount];
-                Marshal.Copy(apiCodeBuffer, apiCodes, 0, apiCount);
-
-                _diagnostics.RecordEvent("Camera", $"Retrieved {apiCount} API codes from GetDeviceInfoEx");
-
-                // Try to identify LENR API codes using heuristic approach
-                // LENR Get/Set functions should return/set values of 0 (OFF) or 1 (ON)
-                // We'll try GetProp on codes to find ones that return 0 or 1
-                // Note: We test with API_PARAM = 0 first (most common), but some functions use param = 1
-                
-                const int maxCodesToTest = 100; // Limit to avoid being too slow
-                var candidateCodes = new List<(int apiCode, int apiParam, long value)>();
-                
-                // First pass: Try with API_PARAM = 0
-                for (int i = 0; i < Math.Min(apiCodes.Length, maxCodesToTest); i++)
-                {
-                    var testApiCode = apiCodes[i];
-                    
-                    // Try GetProp with API_PARAM = 0
-                    var getResult = FujifilmSdkWrapper.XSDK_GetProp(_session.Handle, testApiCode, 0, out long testValue);
-                    
-                    if (getResult == FujifilmSdkWrapper.XSDK_COMPLETE)
-                    {
-                        // Check if value is 0 or 1 (typical ON/OFF values for LENR)
-                        if (testValue == 0 || testValue == 1)
-                        {
-                            candidateCodes.Add((testApiCode, 0, testValue));
-                            _diagnostics.RecordEvent("Camera", $"Found candidate LENR code: 0x{testApiCode:X} (param=0) returned value {testValue}");
-                        }
-                    }
-                }
-                
-                // If no candidates found with param=0, try param=1 for a few codes
-                if (candidateCodes.Count == 0 && apiCodes.Length > 0)
-                {
-                    _diagnostics.RecordEvent("Camera", "No candidates found with param=0, trying param=1 for first 20 codes...");
-                    for (int i = 0; i < Math.Min(apiCodes.Length, 20); i++)
-                    {
-                        var testApiCode = apiCodes[i];
-                        var getResult = FujifilmSdkWrapper.XSDK_GetProp(_session.Handle, testApiCode, 1, out long testValue);
-                        
-                        if (getResult == FujifilmSdkWrapper.XSDK_COMPLETE && (testValue == 0 || testValue == 1))
-                        {
-                            candidateCodes.Add((testApiCode, 1, testValue));
-                            _diagnostics.RecordEvent("Camera", $"Found candidate LENR code: 0x{testApiCode:X} (param=1) returned value {testValue}");
-                        }
-                    }
-                }
-                
-                // If we found candidates, use the first one
-                // Note: We can't definitively verify it's LENR without changing settings,
-                // but if it returns 0/1 and SetProp works, it's likely an ON/OFF setting
-                if (candidateCodes.Count > 0)
-                {
-                    var candidate = candidateCodes[0];
-                    _diagnostics.RecordEvent("Camera", $"Using candidate LENR API code: 0x{candidate.apiCode:X} (param={candidate.apiParam}, current value={candidate.value})");
-                    _diagnostics.RecordEvent("Camera", $"Note: This is a heuristic match. If LENR control doesn't work, codes may need to be added to lookup table.");
-                    
-                    // Return codes (assuming Get and Set use same code and param)
-                    return (candidate.apiCode, candidate.apiParam, candidate.apiCode, candidate.apiParam);
-                }
-                
-                _diagnostics.RecordEvent("Camera", $"Tested {Math.Min(apiCodes.Length, maxCodesToTest)} API codes but found no candidates returning 0/1 values. Using lookup table fallback.");
-                return null;
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(apiCodeBuffer);
-            }
-        }
-        catch (Exception ex)
-        {
-            _diagnostics.RecordEvent("Camera", $"Error getting API codes from GetDeviceInfoEx: {ex.Message}");
-            return null;
-        }
-    }
-
-    private (int GetApiCode, int GetApiParam, int SetApiCode, int SetApiParam)? GetLongExposureNrApiCodesFromLookup(string modelName)
-    {
-        // Lookup table for known API codes
-        // These would typically come from model-specific header files (e.g., GFX100S.h)
-        // Format: (GetApiCode, GetApiParam, SetApiCode, SetApiParam)
-        // API_PARAM values are typically 0 or 1 depending on the function
-        
-        // Note: These codes need to be discovered from SDK header files or through testing
-        // This is a placeholder structure that can be populated as codes are discovered
-        // 
-        // To find these codes:
-        // 1. Check SDK header files (e.g., GFX100S.h) for constants like:
-        //    - GFX100S_API_CODE_GetLongExposureNR
-        //    - GFX100S_API_PARAM_GetLongExposureNR
-        //    - GFX100S_API_CODE_SetLongExposureNR
-        //    - GFX100S_API_PARAM_SetLongExposureNR
-        // 2. Or test by calling GetProp/SetProp with suspected codes
-        
-        var lookup = new Dictionary<string, (int GetApiCode, int GetApiParam, int SetApiCode, int SetApiParam)>(StringComparer.OrdinalIgnoreCase)
-        {
-            // Example format (these are placeholder values - actual codes need to be determined):
-            // { "GFX100S", (0x1234, 0, 0x1235, 0) },
-            // { "GFX100", (0x1236, 0, 0x1237, 0) },
-            // Add more models as API codes are discovered from SDK headers or testing
-        };
-
-        if (lookup.TryGetValue(modelName, out var codes))
-        {
-            _diagnostics.RecordEvent("Camera", $"Found LENR API codes in lookup table for '{modelName}': Get=0x{codes.GetApiCode:X}, Set=0x{codes.SetApiCode:X}");
-            return codes;
-        }
-
-        _diagnostics.RecordEvent("Camera", $"No LENR API codes found in lookup table for model '{modelName}'");
-        return null;
     }
 
     private CameraConfig? ResolveConfiguration(string displayName)
