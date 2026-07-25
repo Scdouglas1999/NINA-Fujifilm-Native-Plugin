@@ -101,13 +101,17 @@ public sealed class FujiSettings
 
     /// <summary>
     /// Live view image quality setting.
-    /// Default is Normal for balanced speed and quality.
     /// </summary>
-    public LiveViewQuality LiveViewQuality { get; set; } = LiveViewQuality.Normal;
+    /// <remarks>
+    /// Defaults to Fine. A GFX100S II rejects the Normal value outright (the SDK reference lists
+    /// only Fine and Basic, even though the headers define a Normal constant), so requesting it
+    /// silently left the camera on whatever quality it happened to be using.
+    /// </remarks>
+    public LiveViewQuality LiveViewQuality { get; set; } = LiveViewQuality.Fine;
 
     /// <summary>
     /// Live view image size setting.
-    /// Default is Large (1280px) for best preview detail.
+    /// Default is Large, which measures 1024x768 on a GFX100S II.
     /// </summary>
     public LiveViewSize LiveViewSize { get; set; } = LiveViewSize.Large;
 
@@ -185,7 +189,7 @@ public sealed class FujiSettings
         }
         if (!Enum.IsDefined(typeof(global::NINA.Plugins.Fujifilm.Devices.LiveView.LiveViewQuality), LiveViewQuality))
         {
-            LiveViewQuality = global::NINA.Plugins.Fujifilm.Devices.LiveView.LiveViewQuality.Normal;
+            LiveViewQuality = global::NINA.Plugins.Fujifilm.Devices.LiveView.LiveViewQuality.Fine;
         }
         if (!Enum.IsDefined(typeof(global::NINA.Plugins.Fujifilm.Devices.LiveView.LiveViewSize), LiveViewSize))
         {

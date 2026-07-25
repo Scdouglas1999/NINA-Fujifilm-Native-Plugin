@@ -56,16 +56,21 @@ public enum LiveViewSize
 public static class LiveViewEnumExtensions
 {
     /// <summary>
-    /// Gets the approximate pixel width for this size setting.
+    /// A short label for this size setting.
     /// </summary>
-    public static int GetApproximateWidth(this LiveViewSize size)
+    /// <remarks>
+    /// Deliberately relative rather than a pixel count. The frame size depends on the model and its
+    /// sensor aspect ratio - a GFX100S II streams 1024x768 at Large, and a 3:2 body will not - so
+    /// the only trustworthy dimensions are the ones read back from a decoded frame.
+    /// </remarks>
+    public static string GetSizeLabel(this LiveViewSize size)
     {
         return size switch
         {
-            LiveViewSize.Large => 1280,
-            LiveViewSize.Medium => 800,
-            LiveViewSize.Small => 640,
-            _ => 640
+            LiveViewSize.Large => "Large",
+            LiveViewSize.Medium => "Medium",
+            LiveViewSize.Small => "Small",
+            _ => "Unknown"
         };
     }
 

@@ -75,7 +75,24 @@ public sealed class LiveViewService : ILiveViewService, IDisposable
             if (qualityResult != FujifilmSdkWrapper.XSDK_COMPLETE)
             {
                 var error = FujifilmSdkWrapper.GetLastError(handle);
-                _diagnostics.RecordEvent("LiveView", $"Warning: Failed to set quality (result={qualityResult}, ErrCode=0x{error.ErrorCode:X})");
+                _diagnostics.RecordEvent("LiveView", $"Could not set live view quality {quality} (result={qualityResult}, ErrCode=0x{error.ErrorCode:X})");
+
+                // Not every body accepts every value the headers define: a GFX100S II rejects
+                // Normal outright. Rather than leaving the camera on whatever quality it happened to
+                // be using - which is what produced unpredictable preview quality - fall back to
+                // Fine, which the SDK reference documents for every supported model.
+                if (quality != LiveViewQuality.Fine)
+                {
+                    var fallback = FujifilmSdkWrapper.XSDK_SetProp(
+                        handle,
+                        FujifilmSdkWrapper.API_CODE_SetLiveViewImageQuality,
+                        FujifilmSdkWrapper.API_PARAM_LiveView,
+                        (int)LiveViewQuality.Fine);
+
+                    _diagnostics.RecordEvent("LiveView", fallback == FujifilmSdkWrapper.XSDK_COMPLETE
+                        ? $"This camera does not accept live view quality {quality}; using Fine instead."
+                        : $"This camera accepted neither {quality} nor Fine for live view quality (result={fallback}).");
+                }
             }
 
             // Configure size

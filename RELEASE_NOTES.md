@@ -45,6 +45,25 @@ This affects every focuser move, not just autofocus.
   metres or feet. If a limiter is set so that autofocus cannot reach infinity, it says so plainly
   rather than leaving you to work out why focus will not reach the stars.
 
+## Live view
+
+Measured on a GFX100S II, which turned up two reasons the preview could look poor.
+
+- **The frame size is no longer guessed.** The plugin told N.I.N.A. the live view frame was
+  1280x853 (a 3:2 estimate) while the camera actually streams 1024x768 at the Large setting - 25%
+  too wide and the wrong aspect ratio - until the first frame was decoded and the real size
+  replaced it. Live view dimensions vary by model, size setting and sensor shape, so nothing is
+  assumed now: the size is reported as unknown until a frame has been decoded, and the decoded
+  frame defines it.
+- **The default quality was one the camera rejects.** `Normal` was the default, and a GFX100S II
+  refuses that value outright, leaving live view on whatever quality the body happened to be set
+  to. The default is now `Fine`, and if a camera rejects the requested quality the plugin falls
+  back to `Fine` rather than silently accepting an unknown one. Verified on the camera: `Normal`
+  returns an error, `Fine` is accepted.
+
+For reference, measured at the Large setting: `Fine` delivers 1024x768 at roughly 200-230 KB per
+frame, `Basic` the same resolution at about 46-52 KB, both at 15-18 fps.
+
 ## Correctness
 
 - **Optional features are gated on what the camera advertises.** The plugin now reads the list of

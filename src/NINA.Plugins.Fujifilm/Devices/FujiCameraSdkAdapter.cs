@@ -563,8 +563,14 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
 
         // Set initial live view dimensions based on the selected size
         // Aspect ratio is approximately 3:2 for Fuji sensors
-        _liveViewWidth = liveViewSize.GetApproximateWidth();
-        _liveViewHeight = (int)(_liveViewWidth / 1.5); // 3:2 aspect ratio
+        // Do not guess the live view frame size. It varies by model, by the size setting, and by
+        // sensor aspect ratio - a GFX100S II streams 4:3 (1024x768 at Large) while the 3:2 estimate
+        // used previously was both too wide and the wrong shape, and N.I.N.A. was told that wrong
+        // size until the first frame arrived. Report unknown until a frame has actually been
+        // decoded; ConvertJpegToImageData sets the real dimensions and callers already treat zero
+        // as "not yet known".
+        _liveViewWidth = 0;
+        _liveViewHeight = 0;
 
         // Clear any old frames from the queue and latest frame
         while (_liveViewFrameQueue.TryTake(out _)) { }

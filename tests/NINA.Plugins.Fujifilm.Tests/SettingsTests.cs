@@ -20,7 +20,8 @@ public sealed class SettingsTests
 
         Assert.Equal(5000, settings.BulbReleaseDelayMs);
         Assert.Equal(DemosaicQuality.Fast, settings.PreviewDemosaicQuality);
-        Assert.Equal(LiveViewQuality.Normal, settings.LiveViewQuality);
+        // Normal is rejected outright by a GFX100S II, so the repaired value is Fine.
+        Assert.Equal(LiveViewQuality.Fine, settings.LiveViewQuality);
         Assert.Equal(LiveViewSize.Large, settings.LiveViewSize);
     }
 
