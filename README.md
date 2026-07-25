@@ -92,25 +92,17 @@ The plugin uses Fujifilm's legacy native Shooting SDK runtime. Configuration fil
 | **X-T Series** | X-T5, X-T4, X-T3 |
 | **X-S Series** | X-S20, X-S10 |
 | **Other** | X-Pro3, X-M5 |
-| **Legacy / Experimental** | X-T2 |
 
-Fujifilm's current Camera Control SDK compatibility list also includes the GFX ETERNA 55 cinema camera. This plugin does not claim support for it because N.I.N.A. integration depends on the still-camera RAF capture/readout workflow, and that workflow has not been verified for ETERNA. It should remain hidden/unsupported here until a real camera and current SDK headers prove the required still-capture APIs behave like the X/GFX still bodies.
+Two cameras are deliberately absent.
 
-### X-T2 status
+**X-T2 is not supported.** Fujifilm's current Camera Control SDK does not list it, and no one has
+reported getting it working with this plugin. A legacy model module for it exists and exports the
+entry points the plugin needs, so the code will still attempt a connection if you try, but treat
+that as unsupported and unlikely to work rather than as a feature.
 
-The X-T2 is a special case. Fujifilm's current public Camera Control SDK does not list it, but the legacy Shooting SDK distributed with earlier plugin releases contains `FF0002API.dll`, whose embedded module identity is `X-T2API.dll` (version 1.3.0.0).
-
-Static inspection confirms that module exports every core SDK entry point this plugin needs for discovery, connection, shutter/ISO control, timed and bulb release, RAW transfer, focus-position control, and live view. That makes basic operation technically plausible, not guaranteed: the path has not been validated here with physical X-T2 hardware.
-
-| X-T2 function | Plugin status |
-| :--- | :--- |
-| USB discovery and connection | Legacy SDK path available; hardware validation needed |
-| Timed/bulb capture and RAW download | Required SDK exports present; hardware validation needed |
-| Electronic-lens focus control | Required SDK exports present; shared-session implementation complete; lens/firmware and hardware validation still required |
-| Live view | Required SDK exports present; implementation complete but physical X-T2 validation still required |
-| Battery percentage | Attempted like any other body. The plugin asks the camera which query layout it implements instead of consulting a list of model names, so if the X-T2 accepts one it will report; if not, battery is shown as unavailable |
-
-An installed X-T2 runtime must include `XAPI.dll`, `XSDK.DAT`, the transport DLLs, and `FF0002API.dll` beside the plugin assembly. Diagnostics now report this inventory explicitly. X-T2 firmware 1.10 introduced USB tethering; use current firmware where practical and select `USB AUTO` / `USB TETHER SHOOTING AUTO` before connecting.
+**GFX ETERNA 55 is not supported.** It is a cinema camera, and N.I.N.A. integration here depends on
+the still-camera RAF capture and readout path, which has not been shown to behave the same way on
+it.
 
 ---
 
@@ -215,7 +207,6 @@ The plugin adds these to N.I.N.A.'s advanced sequencer under the **Fujifilm** ca
 | **Black & White Preview** | Debayering disabled | Enable **Debayer Image** in N.I.N.A. imaging options |
 | **Live view looks stretched or poor** | Fixed in 3.1.0.0: the frame size was estimated wrongly, and the default quality was one some bodies reject | Update to 3.1.0.0; nothing needs configuring |
 | **Lens Not Detected** | Manual focus lens or adapter | Only electronic lenses report a programmable focus range |
-| **X-T2 Not Detected** | Missing legacy model module, camera mode, cable, or another tethering process | Verify `FF0002API.dll` is present; select `USB TETHER SHOOTING AUTO`; close X Acquire/other tethering software; reconnect and export diagnostics |
 | **Battery Unavailable** | The camera did not accept any known battery query layout | Use the camera display. The plugin probes rather than relying on a model list, so this is rare |
 
 ---
@@ -233,8 +224,7 @@ The plugin adds these to N.I.N.A.'s advanced sequencer under the **Fujifilm** ca
 - **One active camera**: the SDK runtime and plugin session are process-global
 - **No pixel-shift multi-shot.** The SDK supports it, but it needs a different capture sequence and
   multi-frame handling, and has not been implemented
-- **Legacy X-T2 path**: the module exists and exposes the needed APIs, but support remains
-  experimental until tested on physical hardware
+- **X-T2 is not supported** and is not known to work
 
 ---
 
@@ -248,13 +238,13 @@ The plugin adds these to N.I.N.A.'s advanced sequencer under the **Fujifilm** ca
 
 ### Build Steps
 
-1. Extract the x64 SDK runtime to a local directory. It must contain `XAPI.dll`, `XSDK.DAT`, `FTLPTP.dll`, the transport DLLs, and the `FF####API.dll` model modules. X-T2 specifically requires `FF0002API.dll`.
+1. Extract the x64 SDK runtime to a local directory. It must contain `XAPI.dll`, `XSDK.DAT`, `FTLPTP.dll`, the transport DLLs, and the `FF####API.dll` model modules.
 2. Open the solution in Visual Studio or build from the command line, passing that directory:
    ```powershell
    dotnet build -c Release -p:FujifilmSdkDir="C:\path\to\FujifilmSdk"
    ```
    The `FUJIFILM_SDK_DIR` environment variable can be used instead.
-3. The build copies the SDK runtime to the plugin output root. Release packaging fails if the core SDK or X-T2 model module is missing, preventing an unusable installer from being produced silently.
+3. The build copies the SDK runtime to the plugin output root. Release packaging fails if any required runtime file is missing, so an unusable installer cannot be produced silently.
 
 ### Tests
 
