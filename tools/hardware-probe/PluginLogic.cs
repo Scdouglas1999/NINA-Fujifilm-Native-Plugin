@@ -78,6 +78,15 @@ internal static class PluginLogic
         Console.WriteLine($"    longest timed exposure this camera offers: {timedMax}s");
         Check("catalog is not empty", map.Count > 0);
 
+        // The reported regression: after 3.0.2.0 the maximum exposure N.I.N.A. offered dropped to
+        // 60s because the SDK's bulb flag is false and the ceiling fell back to the timed maximum.
+        var resolvedBulb = FujifilmBulbCapability.Resolve(bulbFlag != 0, match?.DefaultBulbCapable);
+        var maxExposure = FujifilmBulbCapability.ResolveMaximumExposureSeconds(
+            resolvedBulb, match?.DefaultMaxExposure, timedMax);
+        Console.WriteLine($"    SDK bulb flag={bulbFlag != 0}, model default={match?.DefaultBulbCapable}, resolved bulb={resolvedBulb}");
+        Check($"maximum exposure offered is {maxExposure}s, not 60s", maxExposure >= 3600.0,
+            $"3.0.2.0 would have offered {FujifilmBulbCapability.ResolveMaximumExposureSeconds(bulbFlag != 0, match?.DefaultMaxExposure, 60.0)}s here");
+
         // Selection must never silently shorten an exposure.
         foreach (var req in new[] { 0.5, 1.0, 30.0, 120.0, 900.0, 3600.0 })
         {

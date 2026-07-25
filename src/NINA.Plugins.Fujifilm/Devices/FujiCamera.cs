@@ -67,9 +67,8 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
         var timedMaxExposure = FujifilmShutterSpeedCatalog.GetTimedMaximum(
             _shutterCodeToDuration,
             _config?.DefaultMinExposure ?? DefaultMinExposureSeconds);
-        var bulbMaxExposure = _bulbCapable
-            ? _config?.DefaultMaxExposure ?? 3600.0
-            : timedMaxExposure;
+        var bulbMaxExposure = FujifilmBulbCapability.ResolveMaximumExposureSeconds(
+            _bulbCapable, _config?.DefaultMaxExposure, timedMaxExposure);
         var defaultIso = SelectClosestIsoInternal(_config?.DefaultMinSensitivity ?? (isoValues.Length > 0 ? isoValues[0] : 200));
 
         return new FujiCameraCapabilities(
@@ -1115,7 +1114,7 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
         // successful bulb exposure moments later. Every model this plugin supports has a mechanical
         // bulb mode, which is what DefaultBulbCapable records, so treat the model configuration as
         // authoritative when the SDK denies bulb support.
-        _bulbCapable = sdkBulbCapable || _config?.DefaultBulbCapable == true;
+        _bulbCapable = FujifilmBulbCapability.Resolve(sdkBulbCapable, _config?.DefaultBulbCapable);
         _diagnostics.RecordEvent("Camera", $"Bulb capability: SDK={sdkBulbCapable}, Config={_config?.DefaultBulbCapable}, Final={_bulbCapable}");
 
         if (count == 0)

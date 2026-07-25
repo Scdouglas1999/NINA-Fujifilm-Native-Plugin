@@ -17,6 +17,7 @@
     <Compile Include="../../src/NINA.Plugins.Fujifilm/Devices/FujifilmBatteryProtocol.cs" Link="Plugin/FujifilmBatteryProtocol.cs" />
     <Compile Include="../../src/NINA.Plugins.Fujifilm/Devices/FujifilmShutterSpeedCatalog.cs" Link="Plugin/FujifilmShutterSpeedCatalog.cs" />
     <Compile Include="../../src/NINA.Plugins.Fujifilm/Devices/FujifilmSensitivityCatalog.cs" Link="Plugin/FujifilmSensitivityCatalog.cs" />
+    <Compile Include="../../src/NINA.Plugins.Fujifilm/Devices/FujifilmBulbCapability.cs" Link="Plugin/FujifilmBulbCapability.cs" />
     <Compile Include="../../src/NINA.Plugins.Fujifilm/Devices/FujiCaptureQualityPlan.cs" Link="Plugin/FujiCaptureQualityPlan.cs" />
     <Compile Include="../../src/NINA.Plugins.Fujifilm/Configuration/CameraConfig.cs" Link="Plugin/CameraConfig.cs" />
     <Compile Include="../../src/NINA.Plugins.Fujifilm/Configuration/CameraModelRules.cs" Link="Plugin/CameraModelRules.cs" />

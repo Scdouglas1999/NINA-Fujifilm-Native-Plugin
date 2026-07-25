@@ -4,6 +4,22 @@ Feature release. Every SDK value here was verified twice: once against the Fujif
 an automated checker, and once against a real GFX100S II (firmware 1.20) over USB, including
 write-then-read-back round trips that restored the camera to its original settings afterwards.
 
+## Maximum exposure restored to 60 minutes
+
+**If your maximum exposure dropped to 60 seconds after updating to 3.0.2.0, this fixes it.** That
+release changed bulb detection to trust the SDK's capability flag alone, and that flag reports "not
+capable" on every body observed - 82 of 82 probes, including sessions that went on to run a
+successful bulb exposure moments later, and one camera that listed the bulb shutter code in its own
+supported list while simultaneously denying bulb support. Bulb was therefore treated as unavailable
+and the ceiling collapsed to the longest timed shutter speed the plugin knew about, which was 60
+seconds. Rolling back to 3.0.1.0 restored it because that version let the model configuration
+override the flag.
+
+Both halves are now fixed, independently: the model configuration is authoritative again when the
+SDK denies bulb, and the shutter catalog knows the T-mode codes, so the timed maximum reaches an
+hour by itself on bodies that advertise them. Confirmed on a camera that reports no bulb support:
+the maximum exposure offered is 3600 seconds. A regression test pins the exact reported scenario.
+
 ## Focuser move verification
 
 **Focus moves no longer fail on lenses that report a position offset.** The driver treated a move as
