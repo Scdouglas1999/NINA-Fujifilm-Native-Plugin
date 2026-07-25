@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel.Composition;
 using System.Diagnostics;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -219,30 +221,88 @@ public sealed class LiveViewService : ILiveViewService, IDisposable
     }
 
     /// <inheritdoc/>
-    public void SetZoom(IntPtr handle, int zoomLevel)
+    public IReadOnlyList<double> GetAvailableZoomLevels(IntPtr handle)
     {
         if (handle == IntPtr.Zero)
         {
-            return;
+            return Array.Empty<double>();
         }
 
-        // Clamp zoom level to valid range (1-24)
-        zoomLevel = Math.Clamp(zoomLevel, 1, 24);
+        return LiveViewZoomLevels
+            .DescribeAvailable(QueryAdvertisedZoomCodes(handle))
+            .Select(entry => entry.Magnification)
+            .ToArray();
+    }
+
+    /// <inheritdoc/>
+    public double? SetZoom(IntPtr handle, double magnification)
+    {
+        if (handle == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        // SetThroughImageZoom takes an SDK_THROUGH_ZOOM_* code, not a zoom factor, and the codes are
+        // not ordered by magnification. Ask the camera which it offers and pick the closest, so a
+        // body with three zoom steps and one with sixteen are both handled without a model table.
+        var advertised = QueryAdvertisedZoomCodes(handle);
+        var code = LiveViewZoomLevels.SelectCodeFor(advertised, magnification);
+        if (code == null)
+        {
+            _diagnostics.RecordEvent("LiveView", "This camera did not advertise any live view zoom levels.");
+            return null;
+        }
 
         var result = FujifilmSdkWrapper.XSDK_SetProp(
             handle,
             FujifilmSdkWrapper.API_CODE_SetThroughImageZoom,
             FujifilmSdkWrapper.API_PARAM_LiveView,
-            zoomLevel);
+            code.Value);
 
         if (result == FujifilmSdkWrapper.XSDK_COMPLETE)
         {
-            _diagnostics.RecordEvent("LiveView", $"Zoom set to {zoomLevel}x");
+            var applied = LiveViewZoomLevels.GetMagnification(code.Value);
+            _diagnostics.RecordEvent("LiveView",
+                $"Live view zoom set to {LiveViewZoomLevels.Describe(code.Value)} (asked for x{magnification:0.#}).");
+            return applied;
         }
-        else
+
+        var error = FujifilmSdkWrapper.GetLastError(handle);
+        _diagnostics.RecordEvent("LiveView",
+            $"Camera refused live view zoom {LiveViewZoomLevels.Describe(code.Value)} (result={result}, ErrCode=0x{error.ErrorCode:X}).");
+        return null;
+    }
+
+    /// <summary>Reads the zoom codes this body advertises via CapThroughImageZoom.</summary>
+    private IReadOnlyList<int> QueryAdvertisedZoomCodes(IntPtr handle)
+    {
+        if (FujifilmSdkWrapper.XSDK_CapProp(handle, FujifilmSdkWrapper.API_CODE_CapThroughImageZoom,
+                FujifilmSdkWrapper.API_PARAM_CapThroughImageZoom, out var count, IntPtr.Zero) != FujifilmSdkWrapper.XSDK_COMPLETE
+            || count <= 0)
         {
-            var error = FujifilmSdkWrapper.GetLastError(handle);
-            _diagnostics.RecordEvent("LiveView", $"Failed to set zoom (result={result}, ErrCode=0x{error.ErrorCode:X})");
+            return Array.Empty<int>();
+        }
+
+        var buffer = Marshal.AllocHGlobal(count * sizeof(int));
+        try
+        {
+            if (FujifilmSdkWrapper.XSDK_CapProp(handle, FujifilmSdkWrapper.API_CODE_CapThroughImageZoom,
+                    FujifilmSdkWrapper.API_PARAM_CapThroughImageZoom, out count, buffer) != FujifilmSdkWrapper.XSDK_COMPLETE)
+            {
+                return Array.Empty<int>();
+            }
+
+            var codes = new int[count];
+            for (var i = 0; i < count; i++)
+            {
+                codes[i] = Marshal.ReadInt32(buffer, i * sizeof(int));
+            }
+
+            return codes;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
         }
     }
 

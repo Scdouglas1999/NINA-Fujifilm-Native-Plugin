@@ -22,6 +22,7 @@
     <Compile Include="../../src/NINA.Plugins.Fujifilm/Configuration/CameraModelRules.cs" Link="Plugin/CameraModelRules.cs" />
     <Compile Include="../../src/NINA.Plugins.Fujifilm/Settings/FujiSettings.cs" Link="Plugin/FujiSettings.cs" />
     <Compile Include="../../src/NINA.Plugins.Fujifilm/Devices/LiveView/LiveViewEnums.cs" Link="Plugin/LiveViewEnums.cs" />
+    <Compile Include="../../src/NINA.Plugins.Fujifilm/Devices/LiveView/LiveViewZoomLevels.cs" Link="Plugin/LiveViewZoomLevels.cs" />
     <Compile Include="../../src/NINA.Plugins.Fujifilm/Interop/FujifilmSdkWrapper.cs" Link="Plugin/FujifilmSdkWrapper.cs" />
     <None Include="../../src/NINA.Plugins.Fujifilm/Configuration/Assets/CameraConfigs/*.json" Link="CameraConfigs/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

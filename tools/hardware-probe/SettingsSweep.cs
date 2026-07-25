@@ -214,6 +214,31 @@ internal static class SettingsSweep
         XSDK_SetProp(h, FujifilmSdkWrapper.API_CODE_SetLiveViewImageSize, 1, 1);
         Result("Live view size: all three accepted", sizeOk);
 
+        // Live view zoom: the plugin picks from the codes the camera advertises.
+        var zoomCodes = CapList(h, FujifilmSdkWrapper.API_CODE_CapThroughImageZoom, 2).Select(v => (int)v).ToArray();
+        if (zoomCodes.Length > 0)
+        {
+            var available = NINA.Plugins.Fujifilm.Devices.LiveView.LiveViewZoomLevels.DescribeAvailable(zoomCodes);
+            Console.WriteLine($"    camera advertises zoom codes [{string.Join(",", zoomCodes)}] = " +
+                $"[{string.Join(", ", available.Select(a => "x" + a.Magnification))}]");
+            var allApplied = true;
+            foreach (var (code, mag) in available)
+            {
+                var chosen = NINA.Plugins.Fujifilm.Devices.LiveView.LiveViewZoomLevels.SelectCodeFor(zoomCodes, mag);
+                if (chosen != code) { allApplied = false; continue; }
+                if (XSDK_SetProp(h, FujifilmSdkWrapper.API_CODE_SetThroughImageZoom, 1, code) != 0) allApplied = false;
+            }
+            XSDK_SetProp(h, FujifilmSdkWrapper.API_CODE_SetThroughImageZoom, 1, zoomCodes[0]);
+            Result($"Live view zoom: every advertised level selected and applied ({available.Count})", allApplied);
+
+            // The old code sent the magnification as if it were a code.
+            var oldWouldSend = 24;
+            Result("the old raw-multiplier clamp is not a valid zoom code",
+                !NINA.Plugins.Fujifilm.Devices.LiveView.LiveViewZoomLevels.IsKnownCode(oldWouldSend),
+                $"asking for x24 used to send {oldWouldSend}, which is outside the 0x01-0x11 code space");
+        }
+        else Result("Live view zoom", null, "camera advertises no zoom levels");
+
         Console.WriteLine($"\n  == settings sweep: {_pass} passed, {_fail} failed, {_skip} skipped ==");
         return _fail;
     }

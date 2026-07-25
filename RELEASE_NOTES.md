@@ -61,6 +61,13 @@ Measured on a GFX100S II, which turned up two reasons the preview could look poo
   back to `Fine` rather than silently accepting an unknown one. Verified on the camera: `Normal`
   returns an error, `Fine` is accepted.
 
+- **Live view zoom now works as a focusing aid.** `SetThroughImageZoom` takes an SDK zoom code, not
+  a magnification, and the codes are not ordered by magnification - 0x03 is x6 while 0x04 is x4.
+  The old code clamped its argument to 1-24 and sent it raw, so asking for x6 selected x16 and
+  anything above x17 sent a value that is not a code at all. The plugin now reads the levels a
+  camera advertises and picks the closest to what was asked for. Verified on a body offering
+  x1, x2.5, x4, x8, x16 and x24: every level selected and applied.
+
 For reference, measured at the Large setting: `Fine` delivers 1024x768 at roughly 200-230 KB per
 frame, `Basic` the same resolution at about 46-52 KB, both at 15-18 fps.
 

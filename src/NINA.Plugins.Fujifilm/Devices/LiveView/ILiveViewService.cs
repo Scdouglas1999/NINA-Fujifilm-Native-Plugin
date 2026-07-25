@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -51,5 +52,12 @@ public interface ILiveViewService
     /// </summary>
     /// <param name="handle">The camera handle.</param>
     /// <param name="zoomLevel">Zoom level from 1 to 24 (1x to 24x magnification).</param>
-    void SetZoom(IntPtr handle, int zoomLevel);
+    /// <summary>
+    /// Sets the live view magnification, choosing the closest level this camera offers.
+    /// </summary>
+    /// <returns>The magnification actually applied, or null if the camera has none or refused.</returns>
+    double? SetZoom(IntPtr handle, double magnification);
+
+    /// <summary>The live view magnifications this camera offers, ascending.</summary>
+    IReadOnlyList<double> GetAvailableZoomLevels(IntPtr handle);
 }
