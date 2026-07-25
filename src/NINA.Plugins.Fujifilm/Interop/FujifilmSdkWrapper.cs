@@ -136,6 +136,92 @@ internal static class FujifilmSdkWrapper
     public const int XSDK_LIVEVIEW_SIZE_M = 0x0002;   // 800px
     public const int XSDK_LIVEVIEW_SIZE_S = 0x0003;   // 640px
 
+    // ========== Capture Quality API Codes (XAPIOpt.h) ==========
+    public const int API_CODE_SetLongExposureNR = 0x2145;
+    public const int API_CODE_GetLongExposureNR = 0x2146;
+    public const int API_CODE_CapLongExposureNR = 0x218A;
+    public const int API_CODE_SetRAWCompression = 0x2150;
+    public const int API_CODE_GetRAWCompression = 0x2151;
+    public const int API_CODE_CapRAWCompression = 0x218F;
+    public const int API_CODE_SetRAWOutputDepth = 0x2160;
+    public const int API_CODE_GetRAWOutputDepth = 0x2161;
+    public const int API_CODE_CapRAWOutputDepth = 0x2193;
+    public const int API_CODE_SetCropMode = 0x2267;
+    public const int API_CODE_GetCropMode = 0x2268;
+    public const int API_CODE_CapCropMode = 0x2242;
+
+    // ========== Focus Limiter / Scale API Codes (XAPIOpt.h) ==========
+    public const int API_CODE_CapFocusLimiterMode = 0x2244;
+    public const int API_CODE_GetFocusLimiterIndicator = 0x226B;
+    public const int API_CODE_GetFocusLimiterRange = 0x226C;
+    public const int API_CODE_SetFocusLimiterMode = 0x226D;
+    public const int API_CODE_GetFocusLimiterMode = 0x226E;
+    public const int API_CODE_SetFocusScaleUnit = 0x4215;
+    public const int API_CODE_GetFocusScaleUnit = 0x4216;
+    public const int API_CODE_CapFocusScaleUnit = 0x4235;
+    public const int API_CODE_GetThroughImageZoom = 0x3328;
+    public const int API_CODE_CapThroughImageZoom = 0x332B;
+
+    // API parameters. Verified identical across every model header that supports the call;
+    // build/verify-sdk-interop.py re-checks this against the SDK headers.
+    public const int API_PARAM_SetLongExposureNR = 1;
+    public const int API_PARAM_GetLongExposureNR = 1;
+    public const int API_PARAM_CapLongExposureNR = 2;
+    public const int API_PARAM_SetRAWCompression = 1;
+    public const int API_PARAM_GetRAWCompression = 1;
+    public const int API_PARAM_CapRAWCompression = 2;
+    public const int API_PARAM_SetRAWOutputDepth = 1;
+    public const int API_PARAM_GetRAWOutputDepth = 1;
+    public const int API_PARAM_CapRAWOutputDepth = 2;
+    public const int API_PARAM_SetCropMode = 1;
+    public const int API_PARAM_GetCropMode = 2;   // note: differs from the setter
+    public const int API_PARAM_CapCropMode = 2;
+    public const int API_PARAM_GetFocusLimiterRange = 2;
+    public const int API_PARAM_GetFocusLimiterMode = 1;
+    public const int API_PARAM_SetFocusLimiterMode = 1;
+    public const int API_PARAM_GetFocusLimiterIndicator = 1;
+    public const int API_PARAM_SetFocusScaleUnit = 1;
+    public const int API_PARAM_GetFocusScaleUnit = 1;
+    public const int API_PARAM_CapFocusScaleUnit = 2;
+    public const int API_PARAM_SetThroughImageZoom = 1;
+    public const int API_PARAM_GetThroughImageZoom = 1;
+    public const int API_PARAM_CapThroughImageZoom = 2;
+
+    // ========== Generic ON/OFF (XAPIOpt.h). OFF is 2, not 0. ==========
+    public const int SDK_ON = 0x0001;
+    public const int SDK_OFF = 0x0002;
+
+    // ========== RAW Output Depth (XAPIOpt.h) ==========
+    public const int SDK_RAWOUTPUTDEPTH_14BIT = 0x0001;
+    public const int SDK_RAWOUTPUTDEPTH_16BIT = 0x0002;
+
+    // ========== RAW Compression (XAPIOpt.h) ==========
+    public const int SDK_RAW_COMPRESSION_OFF = 0x0001;       // Uncompressed
+    public const int SDK_RAW_COMPRESSION_LOSSLESS = 0x0002;  // Lossless compression
+    public const int SDK_RAW_COMPRESSION_LOSSY = 0x0003;
+
+    // ========== Crop Mode (XAPIOpt.h) ==========
+    public const int SDK_CROPMODE_OFF = 0x0000;
+    public const int SDK_CROPMODE_35MM = 0x0001;
+    public const int SDK_CROPMODE_SPORTSFINDER_125 = 0x0002;
+    public const int SDK_CROPMODE_AUTO = 0x8001;
+
+    // ========== Focus Distance Scale Unit (XAPIOpt.h) ==========
+    public const int SDK_SCALEUNIT_M = 0x0001;
+    public const int SDK_SCALEUNIT_FT = 0x0002;
+
+    // ========== Focus Limiter (XAPIOpt.h) ==========
+    public const int SDK_FOCUS_LIMITER_OFF = 0x0001;      // aka FULL
+    public const int SDK_FOCUS_LIMITER_MOD_MID = 0x0002;
+    public const int SDK_FOCUS_LIMITER_MID_INF = 0x0003;
+    public const int SDK_FOCUS_LIMITER_STATUS_VALID = 0x0001;
+    public const int SDK_FOCUS_LIMITER_STATUS_INVALID = 0x0000;
+
+    // ========== Release / drive modes for cancel and pixel shift (XAPI.h) ==========
+    public const int XSDK_RELEASE_CANCEL = 0x000F;
+    public const int XSDK_RELEASE_PIXELSHIFT = 0x4000;
+    public const int XSDK_DRIVE_MODE_PIXELSHIFTMULTISHOT = 0x0010;
+
     // ========== Image Format Constants ==========
     // XAPI.h lines 378-382. Only the low byte of lFormat carries the format; bits 0x0F00 encode
     // the camera rotation, so always mask with 0xFF before comparing.
@@ -247,6 +333,123 @@ internal static class FujifilmSdkWrapper
         return XSDK_SetProp(hCamera, XSDK_API_CODE_SetFocusMode, XSDK_API_PARAM_SetFocusMode, lFocusMode);
     }
 
+    // ---- Capture quality ----------------------------------------------------------------
+
+    public static int XSDK_GetLongExposureNR(IntPtr hCamera, out int plSetting)
+        => XSDK_GetProp(hCamera, API_CODE_GetLongExposureNR, API_PARAM_GetLongExposureNR, out plSetting);
+
+    public static int XSDK_SetLongExposureNR(IntPtr hCamera, int lSetting)
+        => XSDK_SetProp(hCamera, API_CODE_SetLongExposureNR, API_PARAM_SetLongExposureNR, lSetting);
+
+    public static int XSDK_GetRAWCompression(IntPtr hCamera, out int plSetting)
+        => XSDK_GetProp(hCamera, API_CODE_GetRAWCompression, API_PARAM_GetRAWCompression, out plSetting);
+
+    public static int XSDK_SetRAWCompression(IntPtr hCamera, int lSetting)
+        => XSDK_SetProp(hCamera, API_CODE_SetRAWCompression, API_PARAM_SetRAWCompression, lSetting);
+
+    public static int XSDK_GetRAWOutputDepth(IntPtr hCamera, out int plSetting)
+        => XSDK_GetProp(hCamera, API_CODE_GetRAWOutputDepth, API_PARAM_GetRAWOutputDepth, out plSetting);
+
+    public static int XSDK_SetRAWOutputDepth(IntPtr hCamera, int lSetting)
+        => XSDK_SetProp(hCamera, API_CODE_SetRAWOutputDepth, API_PARAM_SetRAWOutputDepth, lSetting);
+
+    /// <summary>
+    /// Reads the crop mode. Unlike the other getters here this one writes <b>two</b> values:
+    /// API_PARAM is the number of output values the call produces, and GetCropMode's parameter is
+    /// 2 because it returns the mode and a status alongside it. Passing a single output pointer
+    /// lets the SDK write past the end of the caller's storage.
+    /// </summary>
+    public static int XSDK_GetCropMode(IntPtr hCamera, out int plSetting, out int plStatus)
+        => XSDK_GetProp2(hCamera, API_CODE_GetCropMode, API_PARAM_GetCropMode, out plSetting, out plStatus);
+
+    [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetProp")]
+    private static extern int XSDK_GetProp2(IntPtr hCamera, int lAPICode, int lAPIParam, out int plValue1, out int plValue2);
+
+    public static int XSDK_SetCropMode(IntPtr hCamera, int lSetting)
+        => XSDK_SetProp(hCamera, API_CODE_SetCropMode, API_PARAM_SetCropMode, lSetting);
+
+    // ---- Focus limiter and distance scale ------------------------------------------------
+
+    public static int XSDK_GetFocusLimiterMode(IntPtr hCamera, out int plMode)
+        => XSDK_GetProp(hCamera, API_CODE_GetFocusLimiterMode, API_PARAM_GetFocusLimiterMode, out plMode);
+
+    public static int XSDK_GetFocusScaleUnit(IntPtr hCamera, out int plUnit)
+        => XSDK_GetProp(hCamera, API_CODE_GetFocusScaleUnit, API_PARAM_GetFocusScaleUnit, out plUnit);
+
+    public static int XSDK_GetThroughImageZoom(IntPtr hCamera, out int plZoom)
+        => XSDK_GetProp(hCamera, API_CODE_GetThroughImageZoom, API_PARAM_GetThroughImageZoom, out plZoom);
+
+    /// <summary>
+    /// Reads the focus limiter indicator: the current focus position, the depth-of-field bounds
+    /// around it, and the limiter's A/B endpoints, all in focus pulses.
+    /// </summary>
+    public static int XSDK_GetFocusLimiterIndicator(IntPtr hCamera, out XSDK_FOCUS_LIMITER_INDICATOR indicator)
+    {
+        int size = Marshal.SizeOf<XSDK_FOCUS_LIMITER_INDICATOR>();
+        IntPtr buffer = Marshal.AllocHGlobal(size);
+        try
+        {
+            var result = XSDK_GetProp_Struct(
+                hCamera,
+                API_CODE_GetFocusLimiterIndicator,
+                API_PARAM_GetFocusLimiterIndicator,
+                buffer);
+            indicator = Marshal.PtrToStructure<XSDK_FOCUS_LIMITER_INDICATOR>(buffer);
+            return result;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    /// <summary>
+    /// Reads the endpoints of every focus limiter range the lens offers. Pass a null buffer to
+    /// learn the count first, as documented for GetFocusLimiterRange.
+    /// </summary>
+    public static int XSDK_GetFocusLimiterRange(IntPtr hCamera, out XSDK_FOCUS_LIMITER[] ranges)
+    {
+        ranges = Array.Empty<XSDK_FOCUS_LIMITER>();
+
+        var countResult = XSDK_GetProp_Count(
+            hCamera, API_CODE_GetFocusLimiterRange, API_PARAM_GetFocusLimiterRange, out var count, IntPtr.Zero);
+        if (countResult != XSDK_COMPLETE || count <= 0)
+        {
+            return countResult;
+        }
+
+        int entrySize = Marshal.SizeOf<XSDK_FOCUS_LIMITER>();
+        IntPtr buffer = Marshal.AllocHGlobal(entrySize * count);
+        try
+        {
+            var result = XSDK_GetProp_Count(
+                hCamera, API_CODE_GetFocusLimiterRange, API_PARAM_GetFocusLimiterRange, out count, buffer);
+            if (result != XSDK_COMPLETE)
+            {
+                return result;
+            }
+
+            var parsed = new XSDK_FOCUS_LIMITER[count];
+            for (int i = 0; i < count; i++)
+            {
+                parsed[i] = Marshal.PtrToStructure<XSDK_FOCUS_LIMITER>(buffer + (i * entrySize));
+            }
+
+            ranges = parsed;
+            return result;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetProp")]
+    private static extern int XSDK_GetProp_Struct(IntPtr hCamera, int lAPICode, int lAPIParam, IntPtr pData);
+
+    [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetProp")]
+    private static extern int XSDK_GetProp_Count(IntPtr hCamera, int lAPICode, int lAPIParam, out int plNum, IntPtr pData);
+
     // Helper methods wrapping generic property functions
     public static int XSDK_CapFocusPos(IntPtr hCamera, out XSDK_FOCUS_POS_CAP focusPosCap)
     {
@@ -314,8 +517,6 @@ internal static class FujifilmSdkWrapper
     [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetDynamicRange")]
     public static extern int XSDK_GetDynamicRange(IntPtr hCamera, out int plDRange);
 
-    [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetImageSize")]
-    public static extern int XSDK_GetImageSize(IntPtr hCamera, out int plImageSize);
 
     [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetErrorNumber")]
     public static extern int XSDK_GetErrorNumber(IntPtr hCamera, out int plAPICode, out int plERRCode);
@@ -398,6 +599,26 @@ internal static class FujifilmSdkWrapper
         // 56 bytes for a struct the SDK writes 64 bytes into, overrunning the buffer on every
         // XSDK_ReadImageInfo call.
         public IntPtr hImage;
+    }
+
+    /// <summary>XAPIOpt.h SDK_FOCUS_LIMITER_INDICATOR, #pragma pack(1). All values are focus pulses.</summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct XSDK_FOCUS_LIMITER_INDICATOR
+    {
+        public int lCurrent;
+        public int lDOF_Near;
+        public int lDOF_Far;
+        public int lPos_A;
+        public int lPos_B;
+        public int lStatus;
+    }
+
+    /// <summary>XAPIOpt.h SDK_FOCUS_LIMITER, #pragma pack(1). One selectable limiter range.</summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct XSDK_FOCUS_LIMITER
+    {
+        public int lPos_A;
+        public int lPos_B;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 4)]

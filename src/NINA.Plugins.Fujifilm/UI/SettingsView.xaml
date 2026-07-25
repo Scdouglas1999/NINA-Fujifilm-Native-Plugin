@@ -141,6 +141,84 @@
                 </TextBlock>
             </StackPanel>
 
+            <!-- Capture Quality -->
+            <TextBlock Text="Capture Quality" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8" />
+            <StackPanel Margin="0,0,0,24">
+                <Grid Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="RAW bit depth:" VerticalAlignment="Center" Margin="0,0,12,0" />
+                    <ComboBox Grid.Column="1" Width="200" HorizontalAlignment="Left"
+                              SelectedValue="{Binding Settings.RawBitDepth, Mode=TwoWay}"
+                              SelectedValuePath="Tag">
+                        <ComboBoxItem Content="Leave camera setting alone" Tag="{x:Static local:RawBitDepthPreference.LeaveAlone}" />
+                        <ComboBoxItem Content="14-bit" Tag="{x:Static local:RawBitDepthPreference.FourteenBit}" />
+                        <ComboBoxItem Content="16-bit (recommended)" Tag="{x:Static local:RawBitDepthPreference.SixteenBit}" />
+                    </ComboBox>
+                </Grid>
+                <TextBlock TextWrapping="Wrap"
+                           Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                           FontSize="11" Margin="0,0,0,12">
+                    16-bit gives more headroom on faint signal. Only the GFX bodies expose this control;
+                    on other models the camera setting is left untouched.
+                </TextBlock>
+
+                <Grid Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="RAW compression:" VerticalAlignment="Center" Margin="0,0,12,0" />
+                    <ComboBox Grid.Column="1" Width="200" HorizontalAlignment="Left"
+                              SelectedValue="{Binding Settings.RawCompression, Mode=TwoWay}"
+                              SelectedValuePath="Tag">
+                        <ComboBoxItem Content="Leave camera setting alone" Tag="{x:Static local:RawCompressionPreference.LeaveAlone}" />
+                        <ComboBoxItem Content="Uncompressed" Tag="{x:Static local:RawCompressionPreference.Uncompressed}" />
+                        <ComboBoxItem Content="Lossless (recommended)" Tag="{x:Static local:RawCompressionPreference.Lossless}" />
+                        <ComboBoxItem Content="Lossy" Tag="{x:Static local:RawCompressionPreference.Lossy}" />
+                    </ComboBox>
+                </Grid>
+                <TextBlock TextWrapping="Wrap"
+                           Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                           FontSize="11" Margin="0,0,0,12">
+                    Lossless compression roughly halves the file with bit-identical data, which halves the
+                    USB download time between sub-exposures.
+                </TextBlock>
+
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                    <CheckBox IsChecked="{Binding Settings.DisableLongExposureNR, Mode=TwoWay}"
+                              VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <TextBlock Text="Turn off the camera's Long Exposure NR (recommended)"
+                               VerticalAlignment="Center" FontWeight="SemiBold" />
+                </StackPanel>
+                <TextBlock TextWrapping="Wrap"
+                           Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                           FontSize="11" Margin="24,0,0,12">
+                    With Long Exposure NR on, the camera shoots a matching dark after every long
+                    sub-exposure and subtracts it internally. That roughly doubles the time per frame and
+                    applies calibration you did not choose. If you leave this unticked the plugin still
+                    warns when the setting is on.
+                </TextBlock>
+
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Sensor crop:" VerticalAlignment="Center" Margin="0,0,12,0" />
+                    <ComboBox Grid.Column="1" Width="200" HorizontalAlignment="Left"
+                              SelectedValue="{Binding Settings.CropMode, Mode=TwoWay}"
+                              SelectedValuePath="Tag">
+                        <ComboBoxItem Content="Leave camera setting alone" Tag="{x:Static local:CropModePreference.LeaveAlone}" />
+                        <ComboBoxItem Content="Off (full sensor)" Tag="{x:Static local:CropModePreference.Off}" />
+                        <ComboBoxItem Content="35mm crop" Tag="{x:Static local:CropModePreference.Crop35mm}" />
+                        <ComboBoxItem Content="Sports finder 1.25x" Tag="{x:Static local:CropModePreference.SportsFinder125}" />
+                    </ComboBox>
+                </Grid>
+            </StackPanel>
+
             <!-- Focuser Settings -->
             <TextBlock Text="Focuser" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8" />
             <StackPanel Margin="0,0,0,24">
@@ -162,6 +240,26 @@
                     <LineBreak />
                     The previous focus mode is restored when the focuser disconnects.
                     Turn this off only if your body refuses to focus with it enabled.
+                </TextBlock>
+                <Grid Margin="0,12,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Focus distance unit:" VerticalAlignment="Center" Margin="0,0,12,0" />
+                    <ComboBox Grid.Column="1" Width="140" HorizontalAlignment="Left"
+                              SelectedValue="{Binding Settings.FocusDistanceUnit, Mode=TwoWay}"
+                              SelectedValuePath="Tag">
+                        <ComboBoxItem Content="Metres" Tag="{x:Static local:FocusDistanceUnit.Meters}" />
+                        <ComboBoxItem Content="Feet" Tag="{x:Static local:FocusDistanceUnit.Feet}" />
+                    </ComboBox>
+                </Grid>
+                <TextBlock TextWrapping="Wrap"
+                           Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                           FontSize="11" Margin="0,4,0,0">
+                    Used when reporting the lens focus limiter ranges. If your lens has a focus limiter
+                    switch that excludes infinity, the plugin will say so instead of leaving you to work
+                    out why focus will not reach the stars.
                 </TextBlock>
             </StackPanel>
 

@@ -402,24 +402,6 @@ public sealed class FujifilmInterop : IFujifilmInterop
         return Task.FromResult((info.lImagePixWidth, info.lImagePixHeight));
     }
 
-    public Task<int> GetImageSizeAsync(FujifilmCameraSession session)
-    {
-        if (session == null || session.Handle == IntPtr.Zero)
-        {
-            throw new ArgumentException("Invalid session", nameof(session));
-        }
-
-        int imageSize;
-        var result = FujifilmSdkWrapper.XSDK_GetImageSize(session.Handle, out imageSize);
-        
-        if (result != FujifilmSdkWrapper.XSDK_COMPLETE)
-        {
-            _diagnostics.RecordEvent("Interop", $"XSDK_GetImageSize returned {result}");
-            return Task.FromResult(-1);
-        }
-
-        return Task.FromResult(imageSize);
-    }
 
     public Task<int> GetSensitivityAsync(FujifilmCameraSession session)
     {

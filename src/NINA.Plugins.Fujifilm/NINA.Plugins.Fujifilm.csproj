@@ -7,7 +7,7 @@
     <AssemblyName>NINA.Plugins.Fujifilm</AssemblyName>
     <RootNamespace>NINA.Plugins.Fujifilm</RootNamespace>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-    <Version>3.0.4.0</Version>
+    <Version>3.1.0.0</Version>
     <FujifilmSdkDir Condition="'$(FujifilmSdkDir)' == '' and '$(FUJIFILM_SDK_DIR)' != ''">$(FUJIFILM_SDK_DIR)</FujifilmSdkDir>
   </PropertyGroup>
 
@@ -16,6 +16,7 @@
     <PackageReference Include="NINA.Core" Version="3.2.0.9001" />
     <PackageReference Include="NINA.Equipment" Version="3.2.0.9001" />
     <PackageReference Include="NINA.Image" Version="3.2.0.9001" />
+    <PackageReference Include="NINA.Sequencer" Version="3.2.0.9001" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="7.0.0" />
     <PackageReference Include="System.Text.Json" Version="9.0.5" />

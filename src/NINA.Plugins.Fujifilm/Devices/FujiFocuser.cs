@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.ComponentModel.Composition;
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,11 +17,13 @@ public sealed class FujiFocuser : IAsyncDisposable
     private readonly IFujifilmInterop _interop;
     private readonly IFujifilmDiagnosticsService _diagnostics;
     private readonly IFujiSettingsProvider _settingsProvider;
+    private readonly IFujiEquipmentRegistry _registry;
 
     private FujifilmCameraDescriptor? _descriptor;
     private FujifilmCameraSession? _session;
 
     private FocusTravelMap? _travel;
+    private FocusLimiterState? _limiter;
     private int? _originalFocusMode;
     private string _lensProductName = string.Empty;
 
@@ -42,12 +45,16 @@ public sealed class FujiFocuser : IAsyncDisposable
 
     public string LensProductName => _lensProductName;
 
+    /// <summary>Focus limiter state reported by the lens, when it has one.</summary>
+    public FocusLimiterState? Limiter => _limiter;
+
     [ImportingConstructor]
-    public FujiFocuser(IFujifilmInterop interop, IFujifilmDiagnosticsService diagnostics, IFujiSettingsProvider settingsProvider)
+    public FujiFocuser(IFujifilmInterop interop, IFujifilmDiagnosticsService diagnostics, IFujiSettingsProvider settingsProvider, IFujiEquipmentRegistry registry)
     {
         _interop = interop;
         _diagnostics = diagnostics;
         _settingsProvider = settingsProvider;
+        _registry = registry;
     }
 
     public void Initialize(FujifilmCameraDescriptor descriptor)
@@ -84,20 +91,36 @@ public sealed class FujiFocuser : IAsyncDisposable
             ? requested
             : TimeSpan.FromSeconds(5);
         var deadline = DateTime.UtcNow + effectiveTimeout;
+
+        // The move is finished when the lens either reaches the target or stops moving. Insisting on
+        // exact arrival does not survive contact with real hardware: a GFX100S II reports a position
+        // roughly 30-38 pulses below whatever it was commanded, repeatably and in both directions,
+        // on a lens whose minimum drive step is 3. Waiting for the position to go quiet handles that
+        // offset, and the residual is logged so a genuinely stuck lens is still visible.
+        var tracker = new FocusSettleTracker(absolute, Math.Max(1, travel.Step));
         while (true)
         {
             await Task.Delay(50, cancellationToken).ConfigureAwait(false);
             var verifyResult = FujifilmSdkWrapper.XSDK_GetFocusPos(session.Handle, out var actualPos);
             FujifilmSdkWrapper.CheckResult(session.Handle, verifyResult, nameof(FujifilmSdkWrapper.XSDK_GetFocusPos));
-            if (Math.Abs(actualPos - absolute) <= Math.Max(1, travel.Step))
+
+            switch (tracker.Observe(actualPos))
             {
-                _diagnostics.RecordEvent("Focuser", $"Focus move complete: requested={absolute}, actual={actualPos}");
-                return;
+                case FocusSettleResult.Arrived:
+                    _diagnostics.RecordEvent("Focuser", $"Focus move complete: requested={absolute}, actual={actualPos}");
+                    return;
+
+                case FocusSettleResult.Settled:
+                    _diagnostics.RecordEvent("Focuser",
+                        $"Focus move settled: requested={absolute}, actual={actualPos} (offset {tracker.Residual} pulses). " +
+                        "The lens reports its position on a slightly different scale from the one it accepts; this is expected.");
+                    return;
             }
 
             if (DateTime.UtcNow >= deadline)
             {
-                throw new TimeoutException($"Lens did not reach focus position {absolute}; last reported position was {actualPos}.");
+                throw new TimeoutException(
+                    $"Lens did not settle at focus position {absolute}; last reported position was {actualPos} and it was still moving.");
             }
         }
     }
@@ -150,8 +173,83 @@ public sealed class FujiFocuser : IAsyncDisposable
         ApplyManualFocusMode();
         QueryFocusLimits();
         QueryLensInfo();
+        QueryFocusLimiter();
+        _registry.RegisterFocuser(this);
         return _session;
     }
+
+    /// <summary>
+    /// Reads the lens' focus limiter. A limiter set to something like "5m - infinity" quietly
+    /// restricts the range autofocus may search, and a limiter that stops short of infinity makes
+    /// astronomical focus unreachable, so it is worth naming rather than leaving the user to guess
+    /// why the focuser is behaving oddly.
+    /// </summary>
+    private void QueryFocusLimiter()
+    {
+        if (_session == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var unit = _settingsProvider.Settings.FocusDistanceUnit == FocusDistanceUnit.Feet
+                ? FujifilmSdkWrapper.SDK_SCALEUNIT_FT
+                : FujifilmSdkWrapper.SDK_SCALEUNIT_M;
+
+            // Limiter endpoints come back in the unit selected here, so set it before reading them.
+            var unitResult = FujifilmSdkWrapper.XSDK_SetProp(
+                _session.Handle,
+                FujifilmSdkWrapper.API_CODE_SetFocusScaleUnit,
+                FujifilmSdkWrapper.API_PARAM_SetFocusScaleUnit,
+                unit);
+            if (unitResult != FujifilmSdkWrapper.XSDK_COMPLETE)
+            {
+                _diagnostics.RecordEvent("Focuser", $"Could not set the focus distance unit (result={unitResult}).");
+            }
+
+            if (FujifilmSdkWrapper.XSDK_GetFocusLimiterMode(_session.Handle, out var mode) == FujifilmSdkWrapper.XSDK_COMPLETE)
+            {
+                _diagnostics.RecordEvent("Focuser", $"Focus limiter mode: {DescribeLimiterMode(mode)}");
+            }
+
+            if (FujifilmSdkWrapper.XSDK_GetFocusLimiterRange(_session.Handle, out var ranges) == FujifilmSdkWrapper.XSDK_COMPLETE
+                && ranges.Length > 0)
+            {
+                var distanceUnit = _settingsProvider.Settings.FocusDistanceUnit;
+                var described = ranges.Select(range =>
+                    $"{FocusDistanceFormatter.Format(range.lPos_A, distanceUnit)}-{FocusDistanceFormatter.Format(range.lPos_B, distanceUnit)}");
+                _diagnostics.RecordEvent("Focuser", $"Lens focus limiter ranges: {string.Join(", ", described)}");
+            }
+
+            if (FujifilmSdkWrapper.XSDK_GetFocusLimiterIndicator(_session.Handle, out var indicator) == FujifilmSdkWrapper.XSDK_COMPLETE)
+            {
+                _limiter = new FocusLimiterState(
+                    indicator.lCurrent, indicator.lDOF_Near, indicator.lDOF_Far,
+                    indicator.lPos_A, indicator.lPos_B, indicator.lStatus);
+                _diagnostics.RecordEvent("Focuser", $"Focus limiter: {_limiter.Describe()}");
+
+                if (_limiter.ExcludesInfinity)
+                {
+                    _diagnostics.RecordEvent("Focuser",
+                        "WARNING: the lens focus limiter excludes infinity. Astronomical focus is unreachable until the " +
+                        "limiter switch on the lens is set to its full range.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _diagnostics.RecordEvent("Focuser", $"Focus limiter query error: {ex.Message}");
+        }
+    }
+
+    private static string DescribeLimiterMode(int mode) => mode switch
+    {
+        FujifilmSdkWrapper.SDK_FOCUS_LIMITER_OFF => "full range",
+        FujifilmSdkWrapper.SDK_FOCUS_LIMITER_MOD_MID => "close to mid",
+        FujifilmSdkWrapper.SDK_FOCUS_LIMITER_MID_INF => "mid to infinity",
+        _ => $"custom(0x{mode:X})"
+    };
 
     /// <summary>
     /// Puts the body into manual focus mode for the duration of the session. XSDK_SetFocusPos is
@@ -316,6 +414,7 @@ public sealed class FujiFocuser : IAsyncDisposable
     {
         if (_session != null)
         {
+            _registry.RegisterFocuser(null);
             RestoreFocusMode();
             await _interop.CloseCameraAsync(_session).ConfigureAwait(false);
             await _session.DisposeAsync().ConfigureAwait(false);

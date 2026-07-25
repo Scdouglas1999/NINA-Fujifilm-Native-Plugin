@@ -1,3 +1,98 @@
+# 3.1.0.0
+
+Feature release. Every SDK value here was verified twice: once against the Fujifilm SDK headers by
+an automated checker, and once against a real GFX100S II (firmware 1.20) over USB, including
+write-then-read-back round trips that restored the camera to its original settings afterwards.
+
+## Focuser move verification
+
+**Focus moves no longer fail on lenses that report a position offset.** The driver treated a move as
+complete only when the reported position matched the commanded one to within the lens' minimum drive
+step. On a GFX100S II the lens reports its position 29-38 pulses *below* whatever it was commanded,
+repeatably and in both directions, on a lens whose minimum drive step is 3 — so the check could
+never succeed and every move ended in a timeout after the lens had already arrived. The move now
+completes when the lens reaches the target *or* stops moving, and the residual offset is logged.
+This affects every focuser move, not just autofocus.
+
+## Capture quality
+
+- **16-bit RAW.** The plugin can now request the RAW bit depth instead of accepting whatever the
+  camera dial is on. Two extra bits of well depth matter on faint nebulosity. Only the GFX bodies
+  expose this control; on other models the camera setting is left untouched.
+- **Lossless RAW compression.** Roughly halves the file with bit-identical data, which halves the
+  USB download time between sub-exposures. The GFX100S II used for testing was shipping
+  *uncompressed* frames, so this is a real saving out of the box.
+- **Long Exposure NR is turned off, and called out when it is on.** With LENR enabled the camera
+  shoots a matching dark after every long sub and subtracts it internally, roughly doubling the time
+  per frame and applying calibration you did not choose. The test camera had it switched **on**.
+- **Sensor crop mode** can be selected, so a 102MP GFX can shoot the 35mm crop for a small target
+  and move far less data per frame. Defaults to leaving your framing alone.
+
+## Control and workflow
+
+- **A long exposure can be aborted.** `XSDK_RELEASE_CANCEL` is issued for an in-progress timed
+  exposure, so a sequence can abandon a 20 minute sub for cloud or a meridian flip instead of waiting
+  it out. Bodies that refuse the request fall back to the previous behaviour. Measured on a
+  GFX100S II: a 15 second exposure was cancelled 2 seconds in, and the camera acknowledged in 9ms.
+  A cancelled exposure still leaves one frame in the camera buffer, so that frame is now discarded
+  rather than being handed to the next sub-exposure as if it belonged to it.
+- **N.I.N.A. sequence instructions**, under the "Fujifilm" category:
+  - *Park Fujifilm focuser at infinity*, with an optional offset, so a session starts from a known
+    focus position rather than wherever the lens was left.
+  - *Set Fujifilm RAW quality*, to change bit depth and compression mid-sequence.
+  - *Turn off Fujifilm Long Exposure NR*.
+- **Focus limiter awareness.** The plugin reads the lens' focus limiter and reports its ranges in
+  metres or feet. If a limiter is set so that autofocus cannot reach infinity, it says so plainly
+  rather than leaving you to work out why focus will not reach the stars.
+
+## Correctness
+
+- **Optional features are gated on what the camera advertises.** The plugin now reads the list of
+  supported API codes from the body and skips anything it does not claim, instead of relying on a
+  per-model table. The test camera advertised 576 API codes.
+- **Removed `XSDK_GetImageSize`.** It is not an exported symbol of `XAPI.dll` at all, so any call
+  would have thrown `EntryPointNotFoundException`. This was found by a new checker that reads the
+  DLL's export table and compares it against every `DllImport` the plugin declares.
+- **`GetCropMode` writes two values, not one.** The API parameter is the number of output values a
+  call produces, and crop mode returns a mode and a status. Reading it with a single output pointer
+  corrupted memory; this was caught by testing against the camera rather than by reading the code.
+- `build/verify-sdk-interop.py` now checks every entry point against `XAPI.dll` and every constant,
+  API code and API parameter against the SDK headers. 201 checks, run before each release.
+
+## Verified on hardware
+
+A GFX100S II on firmware 1.20 was driven over USB during development. Confirmed on the camera
+itself, not just against the headers:
+
+- RAW bit depth, RAW compression, Long Exposure NR and crop mode were each read, changed, read back
+  to prove the change took effect, and restored to their original values.
+- The camera advertised 576 API codes, and the capability gate correctly identified all four
+  capture-quality controls as available.
+- The camera arrived with **Long Exposure NR switched on and RAW compression off** — exactly the two
+  settings this release exists to fix.
+- Focus capability only returns usable values once the body is in manual focus mode, which is the
+  order the plugin already used. The lens reported `INF=-1004, MOD=6995` with 333 and 365 pulses of
+  over-search travel: under the pre-3.0.3.0 mapping infinity sat at position 0 with nothing beneath
+  it, and under the corrected mapping it sits at position 333 within a range of 0-8697. That is the
+  reported autofocus failure, reproduced and fixed on hardware.
+- `SetMediaRecord(OFF)` was accepted and read back as 0x4, confirming the 3.0.4.0 constant fix.
+- Two real exposures were captured and downloaded as valid RAF data. `XSDK_ReadImage` was confirmed
+  to empty the in-camera buffer by itself, so the redundant delete removed in 3.0.4.0 was indeed
+  redundant.
+- In manual exposure mode the body advertised 68 shutter codes including every T-mode value from 2
+  to 60 minutes (`64000030` through `64000180`), all of which the pre-3.0.4.0 catalog rejected as
+  undocumented. It also reported bulb as unavailable while simultaneously listing the bulb shutter
+  code, which is why the plugin overrides that flag.
+
+- Lens information, battery reporting, live view, a bulb exposure and cancelling an exposure in
+  progress were all exercised on the camera. Battery confirmed the eight-value protocol the plugin
+  selects for this model; live view delivered JPEG frames; the bulb sequence produced a valid RAF
+  even though the same body reports bulb as unsupported, which is exactly why that flag is
+  overridden.
+
+Not confirmed on hardware: the rotated-frame mask (the test camera reported no rotation), and the
+sequence instructions running inside N.I.N.A. itself.
+
 # 3.0.4.0
 
 Every change below was found by auditing the plugin against the Fujifilm SDK headers and the

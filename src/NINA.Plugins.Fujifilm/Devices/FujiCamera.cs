@@ -30,6 +30,7 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
     private readonly IFujifilmInterop _interop;
     private readonly ICameraModelCatalog _catalog;
     private readonly IFujiSettingsProvider _settingsProvider;
+    private readonly IFujiEquipmentRegistry _registry;
     private readonly IFujifilmDiagnosticsService _diagnostics;
 
     private FujifilmCameraSession? _session;
@@ -38,6 +39,8 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
     private IReadOnlyDictionary<int, double> _shutterCodeToDuration = new Dictionary<int, double>();
     private IReadOnlyList<int> _supportedShutterCodes = Array.Empty<int>(); // Store originally queried codes for validation
     private bool _bulbCapable;
+    private FujiApiCapabilities _apiCapabilities = FujiApiCapabilities.Unknown;
+    private bool _longExposureNoiseReductionOn;
     private const double DefaultMinExposureSeconds = 0.001;
     private int _bufferShootCapacity;
     private int _bufferTotalCapacity;
@@ -231,12 +234,14 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
         IFujifilmInterop interop,
         ICameraModelCatalog catalog,
         IFujiSettingsProvider settingsProvider,
-        IFujifilmDiagnosticsService diagnostics)
+        IFujifilmDiagnosticsService diagnostics,
+        IFujiEquipmentRegistry registry)
     {
         _interop = interop;
         _catalog = catalog;
         _settingsProvider = settingsProvider;
         _diagnostics = diagnostics;
+        _registry = registry;
     }
 
     public bool IsConnected => _session != null && _session.Handle != IntPtr.Zero;
@@ -381,9 +386,12 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
         // Refresh lens metadata (model, aperture, focal length, capabilities)
         RefreshLensMetadata();
 
-        _diagnostics.RecordEvent("Camera", "For reliable sequencing, disable Long Exposure Noise Reduction in the camera menu.");
+        // RAW depth/compression, Long Exposure NR and crop mode. Runs after InitializeMetadata so
+        // the advertised API code list is available to gate each step.
+        ApplyCaptureQualitySettings();
 
         _diagnostics.RecordEvent("Camera", $"Fujifilm camera {descriptor.DisplayName} connected. ISO count={_supportedSensitivities.Count}, shutter codes={_shutterCodeToDuration.Count}, Battery={_metadata.BatteryLevel}%");
+        _registry.RegisterCamera(this);
         RaisePropertyChanged(nameof(IsConnected));
         }
         catch
@@ -494,6 +502,8 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
                 _metadata.FirmwareVersion = deviceInfo.strFirmware?.Trim() ?? string.Empty;
 
                 _diagnostics.RecordEvent("Camera", $"Device info: Product='{_metadata.ProductName}', Firmware='{_metadata.FirmwareVersion}', API count={apiCount}");
+
+                _apiCapabilities = ReadApiCapabilities(apiCount);
             }
             else
             {
@@ -509,6 +519,173 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
         catch (Exception ex)
         {
             _diagnostics.RecordEvent("Camera", $"Error initializing metadata: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Reads the list of model-dependent API codes the connected body advertises. Optional features
+    /// are gated on this rather than on a per-model table, because the headers disagree between
+    /// models and firmware moves the line.
+    /// </summary>
+    private FujiApiCapabilities ReadApiCapabilities(int apiCount)
+    {
+        if (_session == null || apiCount <= 0)
+        {
+            return FujiApiCapabilities.Unknown;
+        }
+
+        var buffer = Marshal.AllocHGlobal(apiCount * sizeof(int));
+        try
+        {
+            var result = FujifilmSdkWrapper.XSDK_GetDeviceInfoEx(
+                _session.Handle, out _, out var confirmedCount, buffer);
+            if (result != FujifilmSdkWrapper.XSDK_COMPLETE)
+            {
+                _diagnostics.RecordEvent("Camera", $"Could not read the supported API code list (result={result}); optional features will be attempted rather than skipped.");
+                return FujiApiCapabilities.Unknown;
+            }
+
+            var count = Math.Min(apiCount, Math.Max(confirmedCount, 0));
+            var codes = new int[count];
+            for (int i = 0; i < count; i++)
+            {
+                codes[i] = Marshal.ReadInt32(buffer, i * sizeof(int));
+            }
+
+            var capabilities = new FujiApiCapabilities(codes);
+            _diagnostics.RecordEvent("Camera", $"Camera advertises {capabilities.Count} API codes.");
+            return capabilities;
+        }
+        catch (Exception ex)
+        {
+            _diagnostics.RecordEvent("Camera", $"Error reading API code list: {ex.Message}");
+            return FujiApiCapabilities.Unknown;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    /// <summary>
+    /// Applies the user's capture-quality preferences, skipping anything this body does not
+    /// advertise. Every step reads the value back so the log records what the camera actually did.
+    /// </summary>
+    private void ApplyCaptureQualitySettings()
+    {
+        if (_session == null)
+        {
+            return;
+        }
+
+        ReportLongExposureNoiseReduction();
+
+        var steps = FujiCaptureQualityPlan.Build(_settingsProvider.Settings, _apiCapabilities);
+        if (steps.Count == 0)
+        {
+            _diagnostics.RecordEvent("Camera", "No capture-quality changes to apply.");
+            return;
+        }
+
+        foreach (var step in steps)
+        {
+            try
+            {
+                var setResult = FujifilmSdkWrapper.XSDK_SetProp(_session.Handle, step.SetApiCode, 1, step.Value);
+                if (setResult != FujifilmSdkWrapper.XSDK_COMPLETE)
+                {
+                    var error = FujifilmSdkWrapper.GetLastError(_session.Handle);
+                    _diagnostics.RecordEvent("Camera",
+                        $"{step.Name}: could not set {step.Describe(step.Value)} (result={setResult}, error=0x{error.ErrorCode:X}). Leaving the camera setting unchanged.");
+                    continue;
+                }
+
+                _diagnostics.RecordEvent("Camera", $"{step.Name}: set to {step.Describe(step.Value)}.");
+            }
+            catch (Exception ex)
+            {
+                _diagnostics.RecordEvent("Camera", $"{step.Name}: error applying setting: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Sets a single capture property, reporting failure rather than throwing so sequence
+    /// instructions can turn it into a message the user can act on.
+    /// </summary>
+    public bool TrySetCaptureProperty(int setApiCode, int value, string description, out string error)
+    {
+        error = string.Empty;
+
+        if (_session == null)
+        {
+            error = $"Cannot set {description}: the camera is not connected.";
+            return false;
+        }
+
+        if (!_apiCapabilities.Supports(setApiCode))
+        {
+            error = $"This camera does not support setting {description}.";
+            return false;
+        }
+
+        try
+        {
+            var result = FujifilmSdkWrapper.XSDK_SetProp(_session.Handle, setApiCode, 1, value);
+            if (result == FujifilmSdkWrapper.XSDK_COMPLETE)
+            {
+                _diagnostics.RecordEvent("Camera", $"{description} set to 0x{value:X} by a sequence instruction.");
+                return true;
+            }
+
+            var sdkError = FujifilmSdkWrapper.GetLastError(_session.Handle);
+            error = $"The camera refused to set {description} (result={result}, error=0x{sdkError.ErrorCode:X}).";
+            _diagnostics.RecordEvent("Camera", error);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            error = $"Error setting {description}: {ex.Message}";
+            _diagnostics.RecordEvent("Camera", error);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Reads Long Exposure NR and warns when it is on. With LENR enabled the body shoots a matching
+    /// dark after every long sub and subtracts it internally, doubling the frame time and applying
+    /// calibration the user did not choose.
+    /// </summary>
+    private void ReportLongExposureNoiseReduction()
+    {
+        if (_session == null || !_apiCapabilities.Supports(FujifilmSdkWrapper.API_CODE_GetLongExposureNR))
+        {
+            return;
+        }
+
+        try
+        {
+            var result = FujifilmSdkWrapper.XSDK_GetLongExposureNR(_session.Handle, out var setting);
+            if (result != FujifilmSdkWrapper.XSDK_COMPLETE)
+            {
+                _diagnostics.RecordEvent("Camera", $"Could not read the Long Exposure NR setting (result={result}).");
+                return;
+            }
+
+            _longExposureNoiseReductionOn = setting == FujifilmSdkWrapper.SDK_ON;
+            _diagnostics.RecordEvent("Camera", $"Long Exposure NR is {FujiCaptureQualityPlan.DescribeOnOff(setting)}.");
+
+            if (_longExposureNoiseReductionOn && !_settingsProvider.Settings.DisableLongExposureNR)
+            {
+                _diagnostics.RecordEvent("Camera",
+                    "WARNING: Long Exposure NR is enabled. The camera will shoot a matching dark frame after every long exposure, " +
+                    "roughly doubling the time per sub-exposure and subtracting a dark you did not choose. " +
+                    "Enable 'Turn off the camera's Long Exposure NR' in the plugin options, or switch it off on the camera.");
+            }
+        }
+        catch (Exception ex)
+        {
+            _diagnostics.RecordEvent("Camera", $"Error reading Long Exposure NR: {ex.Message}");
         }
     }
 
@@ -1181,12 +1358,105 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
         }
         else
         {
-            _diagnostics.RecordEvent("Camera", "StopExposure requested with no active bulb release. Timed exposures cannot be interrupted by this SDK.");
+            // A timed exposure is running. XSDK_RELEASE_CANCEL is documented as "Long time-exposure
+            // cancelled while in progress", which is what lets a sequence abort a long sub for
+            // clouds or a meridian flip instead of waiting it out.
+            TryCancelTimedExposure();
         }
 
         RefreshBufferCapacity();
         RefreshOperatingState();
         await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Asks the camera to abandon a timed exposure that is still running. Not every body supports
+    /// the release mode, so a refusal is logged and the caller simply waits the exposure out as
+    /// before rather than failing.
+    /// </summary>
+    private void TryCancelTimedExposure()
+    {
+        if (_session == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var result = FujifilmSdkWrapper.XSDK_Release(
+                _session.Handle, FujifilmSdkWrapper.XSDK_RELEASE_CANCEL, IntPtr.Zero, out var status);
+
+            if (result == FujifilmSdkWrapper.XSDK_COMPLETE)
+            {
+                _diagnostics.RecordEvent("Camera", $"Cancelled the in-progress timed exposure (status={status}).");
+
+                // A cancelled exposure still lands a frame in the camera buffer: the body finalises
+                // whatever it had already collected. Leaving it there would hand it to the next
+                // exposure as if it were that exposure's frame, so discard it now.
+                DrainCameraBuffer("after cancelling an exposure");
+                return;
+            }
+
+            var error = FujifilmSdkWrapper.GetLastError(_session.Handle);
+            _diagnostics.RecordEvent("Camera",
+                $"This camera refused XSDK_RELEASE_CANCEL (result={result}, error=0x{error.ErrorCode:X}); the exposure will run to completion.");
+        }
+        catch (Exception ex)
+        {
+            _diagnostics.RecordEvent("Camera", $"Error cancelling the timed exposure: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Discards any frames sitting in the camera's buffer.
+    /// </summary>
+    /// <remarks>
+    /// A frame left behind by an aborted or timed-out exposure is handed to the next download as if
+    /// it belonged to that exposure, so every subsequent sub-exposure in the sequence is off by one.
+    /// Cancelling a timed exposure was measured to leave exactly one such frame behind.
+    /// </remarks>
+    private void DrainCameraBuffer(string reason)
+    {
+        if (_session == null)
+        {
+            return;
+        }
+
+        const int maxFramesToDiscard = 8;
+        var discarded = 0;
+
+        try
+        {
+            for (var attempt = 0; attempt < maxFramesToDiscard; attempt++)
+            {
+                var capacityResult = FujifilmSdkWrapper.XSDK_GetBufferCapacity(
+                    _session.Handle, out var pendingFrames, out _);
+                if (capacityResult != FujifilmSdkWrapper.XSDK_COMPLETE || pendingFrames <= 0)
+                {
+                    break;
+                }
+
+                if (FujifilmSdkWrapper.XSDK_DeleteImage(_session.Handle) != FujifilmSdkWrapper.XSDK_COMPLETE)
+                {
+                    break;
+                }
+
+                discarded++;
+            }
+
+            if (discarded > 0)
+            {
+                _diagnostics.RecordEvent("Camera", $"Discarded {discarded} stale frame(s) from the camera buffer {reason}.");
+            }
+        }
+        catch (Exception ex)
+        {
+            _diagnostics.RecordEvent("Camera", $"Error draining the camera buffer {reason}: {ex.Message}");
+        }
+        finally
+        {
+            RefreshBufferCapacity();
+        }
     }
 
     private async Task ExecuteTimedExposureAsync(double exposureSeconds, CancellationToken cancellationToken)
@@ -1351,6 +1621,8 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
 
     public async Task DisconnectAsync()
     {
+        _registry.RegisterCamera(null);
+
         if (_session != null && _session.Handle != IntPtr.Zero)
         {
             _diagnostics.RecordEvent("Camera", $"Closing camera session {_session.Handle}");

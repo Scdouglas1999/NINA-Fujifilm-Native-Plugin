@@ -28,6 +28,54 @@ public enum DemosaicQuality
     HighQuality = 3
 }
 
+/// <summary>RAW bit depth to request. Only the GFX bodies expose this control.</summary>
+public enum RawBitDepthPreference
+{
+    /// <summary>Use whatever the camera is set to.</summary>
+    LeaveAlone = 0,
+
+    /// <summary>14-bit RAW.</summary>
+    FourteenBit = 1,
+
+    /// <summary>16-bit RAW, for maximum dynamic range on faint signal.</summary>
+    SixteenBit = 2
+}
+
+/// <summary>RAW compression to request.</summary>
+public enum RawCompressionPreference
+{
+    LeaveAlone = 0,
+
+    /// <summary>Uncompressed RAW: largest files and the slowest download.</summary>
+    Uncompressed = 1,
+
+    /// <summary>Lossless compression: about half the size, bit-identical data.</summary>
+    Lossless = 2,
+
+    /// <summary>Lossy compression. Not recommended for astrophotography.</summary>
+    Lossy = 3
+}
+
+/// <summary>Sensor crop mode to request.</summary>
+public enum CropModePreference
+{
+    LeaveAlone = 0,
+    Off = 1,
+
+    /// <summary>35mm-equivalent crop on GFX bodies: fewer pixels, faster downloads.</summary>
+    Crop35mm = 2,
+
+    /// <summary>1.25x sports finder crop.</summary>
+    SportsFinder125 = 3
+}
+
+/// <summary>Unit used to report focus distance.</summary>
+public enum FocusDistanceUnit
+{
+    Meters = 0,
+    Feet = 1
+}
+
 public sealed class FujiSettings
 {
     public int BulbReleaseDelayMs { get; set; } = 500;
@@ -81,8 +129,55 @@ public sealed class FujiSettings
     /// </summary>
     public bool DisableCameraCardRecording { get; set; } = true;
 
+    /// <summary>
+    /// RAW bit depth to request at connect. 16-bit gives more headroom on faint signal; only the
+    /// GFX bodies expose the control, and the plugin leaves the camera alone on models that do not.
+    /// </summary>
+    public RawBitDepthPreference RawBitDepth { get; set; } = RawBitDepthPreference.SixteenBit;
+
+    /// <summary>
+    /// RAW compression to request at connect. Lossless roughly halves the file, which halves the
+    /// USB download time between sub-exposures without touching the data.
+    /// </summary>
+    public RawCompressionPreference RawCompression { get; set; } = RawCompressionPreference.Lossless;
+
+    /// <summary>
+    /// Turn the camera's Long Exposure NR off at connect.
+    /// With LENR on, the body follows every long sub with an equal-length dark frame and subtracts
+    /// it internally: a 300s sub takes 600s and arrives pre-calibrated with a dark you did not
+    /// choose, which is wrong for a workflow that builds its own dark library. When this is
+    /// disabled the plugin still reports the setting and warns if it is on.
+    /// </summary>
+    public bool DisableLongExposureNR { get; set; } = true;
+
+    /// <summary>
+    /// Crop mode to request at connect, or <see cref="CropModePreference.LeaveAlone"/> to use
+    /// whatever the camera is set to. On a 102MP GFX the 35mm crop means far less data per frame.
+    /// </summary>
+    public CropModePreference CropMode { get; set; } = CropModePreference.LeaveAlone;
+
+    /// <summary>Unit used when reporting focus distance in the focuser panel.</summary>
+    public FocusDistanceUnit FocusDistanceUnit { get; set; } = FocusDistanceUnit.Meters;
+
     public void Normalize()
     {
+        if (!Enum.IsDefined(typeof(RawBitDepthPreference), RawBitDepth))
+        {
+            RawBitDepth = RawBitDepthPreference.SixteenBit;
+        }
+        if (!Enum.IsDefined(typeof(RawCompressionPreference), RawCompression))
+        {
+            RawCompression = RawCompressionPreference.Lossless;
+        }
+        if (!Enum.IsDefined(typeof(CropModePreference), CropMode))
+        {
+            CropMode = CropModePreference.LeaveAlone;
+        }
+        if (!Enum.IsDefined(typeof(FocusDistanceUnit), FocusDistanceUnit))
+        {
+            FocusDistanceUnit = FocusDistanceUnit.Meters;
+        }
+
         BulbReleaseDelayMs = Math.Clamp(BulbReleaseDelayMs, 0, 5000);
         if (!Enum.IsDefined(typeof(DemosaicQuality), PreviewDemosaicQuality))
         {

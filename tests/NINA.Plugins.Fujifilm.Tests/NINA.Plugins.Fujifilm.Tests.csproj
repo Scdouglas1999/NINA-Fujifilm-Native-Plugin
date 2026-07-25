@@ -21,6 +21,11 @@
     <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Configuration\CameraModelRules.cs" Link="Source\CameraModelRules.cs" />
     <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Devices\FujifilmShutterSpeedCatalog.cs" Link="Source\FujifilmShutterSpeedCatalog.cs" />
     <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Devices\FocusTravelMap.cs" Link="Source\FocusTravelMap.cs" />
+    <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Devices\FujiApiCapabilities.cs" Link="Source\FujiApiCapabilities.cs" />
+    <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Devices\FocusLimiterState.cs" Link="Source\FocusLimiterState.cs" />
+    <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Devices\FocusSettleTracker.cs" Link="Source\FocusSettleTracker.cs" />
+    <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Interop\FujifilmSdkWrapper.cs" Link="Source\FujifilmSdkWrapper.cs" />
+    <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Devices\FujiCaptureQualityPlan.cs" Link="Source\FujiCaptureQualityPlan.cs" />
     <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Devices\FujifilmBatteryProtocol.cs" Link="Source\FujifilmBatteryProtocol.cs" />
     <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Devices\LiveView\LiveViewEnums.cs" Link="Source\LiveViewEnums.cs" />
     <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Imaging\FujiMetadataValueParser.cs" Link="Source\FujiMetadataValueParser.cs" />

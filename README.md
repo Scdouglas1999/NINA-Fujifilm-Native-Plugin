@@ -139,6 +139,11 @@ Access plugin settings through **Options > Plugins > Fujifilm Native Camera**.
 | **Save Native RAF Sidecar** | Saves original RAF file alongside processed images | Enabled |
 | **Extended FITS Metadata** | Adds Fujifilm metadata to FITS headers | Enabled |
 | **Stop camera writing to its memory card** | Prevents card writes competing with the USB download | Enabled |
+| **RAW bit depth** | Requests 14-bit or 16-bit RAW (GFX bodies only) | 16-bit |
+| **RAW compression** | Lossless roughly halves the file and the download time | Lossless |
+| **Turn off Long Exposure NR** | Stops the camera shooting and subtracting its own dark after every long sub | Enabled |
+| **Sensor crop** | Crop mode to request; smaller frames download faster | Leave alone |
+| **Focus distance unit** | Unit used when reporting lens focus limiter ranges | Metres |
 | **Force manual focus mode** | Stops the body refocusing on its own while the focuser is connected | Enabled |
 | **Demosaic Quality** | Preview processing quality (Fast/Balanced/High Quality) | Fast |
 | **Live View Quality / Size** | Controls SDK live-view stream quality and dimensions | Normal / Large |
@@ -146,6 +151,18 @@ Access plugin settings through **Options > Plugins > Fujifilm Native Camera**.
 Settings are written to disk when you press **Save** and also when you navigate away from the
 options page. **Export Diagnostics** writes a JSON report and shows you the file path; plugin
 events are also mirrored into N.I.N.A.'s own log.
+
+---
+
+## Sequence instructions
+
+The plugin adds these to N.I.N.A.'s advanced sequencer under the **Fujifilm** category:
+
+| Instruction | Purpose |
+| :--- | :--- |
+| **Park Fujifilm focuser at infinity** | Moves the lens to its infinity mark, with an optional offset, so a session starts from a known focus position |
+| **Set Fujifilm RAW quality** | Changes RAW bit depth and compression mid-sequence |
+| **Turn off Fujifilm Long Exposure NR** | Ensures the camera is not shooting its own darks |
 
 ---
 
