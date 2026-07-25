@@ -6,6 +6,24 @@ a failure visible in real device logs.
 
 ## Exposure
 
+- **A sub-exposure is never silently shortened.** If a requested exposure was longer than the
+  camera's longest timed shutter speed and bulb was unavailable, the driver quietly substituted the
+  nearest timed speed — so a 300 second sub was exposed for 60 seconds and then written to FITS
+  labelled `EXPTIME = 300`. That is invisible in the file and corrupts a stack. The request now
+  fails with an explanation instead.
+- **Bulb mode works again on every model.** The SDK's bulb-capability flag came back "not capable"
+  on all 82 probes in the diagnostics logs, including sessions that went on to run a successful bulb
+  exposure seconds later. The flag is not trustworthy, so the model configuration — which records
+  that every supported body has a mechanical bulb mode — is now authoritative when the SDK denies it.
+  Together with the item above, this is what kept long sub-exposures working correctly.
+- **All 18 camera models now advertise a 60 minute bulb ceiling.** Five bodies (X-T4, X-H2S, X-S10,
+  X-S20, X-M5) were capped at 900 seconds while their same-generation siblings allowed 3600.
+  Fujifilm's published specifications give "Bulb mode: up to 60min." for all of them.
+- **Corrected the fastest-shutter figure on nine models.** Seven GFX bodies claimed 1/32000s when
+  their electronic shutter reaches 1/16000s, and the X-S20 carried the X-H2's 1/180000s figure along
+  with the X-T5's ISO 125 floor (the X-S20's standard range starts at ISO 160). Every model's
+  declared limits now correspond to shutter speeds the SDK can actually express, and a test enforces
+  that.
 - **Sub-exposures longer than 60 seconds can now use the camera's own timed shutter.** The shutter
   catalog stopped at 60 seconds, so every longer code the body advertised — including the whole
   T-mode series from 2 to 60 minutes — was rejected as undocumented and the exposure was pushed onto

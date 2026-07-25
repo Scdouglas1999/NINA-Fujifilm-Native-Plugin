@@ -113,5 +113,50 @@ public sealed class FujifilmShutterSpeedCatalogTests
 
         Assert.Equal(64000090, FujifilmShutterSpeedCatalog.SelectCode(map, 480.0, bulbCapable: true));
     }
+
+    [Fact]
+    public void SelectCode_ThrowsRatherThanSilentlyShorteningTheExposure()
+    {
+        // Without bulb, a request beyond the longest timed speed used to return the nearest timed
+        // code. The frame was then exposed for 60s while the caller recorded 300s, so the sub was
+        // written to FITS with an EXPTIME that did not match the light it collected.
+        var map = FujifilmShutterSpeedCatalog.Build(
+            new[] { 1000000, 32000000, 64000000 },
+            Array.Empty<ShutterSpeedMapping>(),
+            bulbCapable: false,
+            bulbMaxSeconds: 0);
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => FujifilmShutterSpeedCatalog.SelectCode(map, 300.0, bulbCapable: false));
+
+        Assert.Contains("300", ex.Message);
+        Assert.Contains("60", ex.Message);
+    }
+
+    [Fact]
+    public void SelectCode_StillUsesBulbForLongRequestsWhenAvailable()
+    {
+        var map = FujifilmShutterSpeedCatalog.Build(
+            new[] { 1000000, 64000000 },
+            Array.Empty<ShutterSpeedMapping>(),
+            bulbCapable: true,
+            bulbMaxSeconds: 3600);
+
+        Assert.Equal(FujifilmShutterSpeedCatalog.BulbCode,
+            FujifilmShutterSpeedCatalog.SelectCode(map, 300.0, bulbCapable: true));
+    }
+
+    [Fact]
+    public void SelectCode_RoundsWithinTheTimedRangeAsBefore()
+    {
+        var map = FujifilmShutterSpeedCatalog.Build(
+            new[] { 1000000, 32000000, 64000000 },
+            Array.Empty<ShutterSpeedMapping>(),
+            bulbCapable: false,
+            bulbMaxSeconds: 0);
+
+        Assert.Equal(32000000, FujifilmShutterSpeedCatalog.SelectCode(map, 29.0, bulbCapable: false));
+        Assert.Equal(64000000, FujifilmShutterSpeedCatalog.SelectCode(map, 60.0, bulbCapable: false));
+    }
 }
 

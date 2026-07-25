@@ -74,9 +74,20 @@ internal static class FujifilmShutterSpeedCatalog
         }
 
         var maxTimed = timed.Max(pair => pair.Value);
-        if (requestedSeconds > maxTimed && bulbCapable)
+        if (requestedSeconds > maxTimed)
         {
-            return BulbCode;
+            if (bulbCapable)
+            {
+                return BulbCode;
+            }
+
+            // Never silently substitute the nearest timed speed for a longer request. Doing so
+            // exposed the frame for maxTimed seconds while the caller recorded the requested
+            // duration, producing a sub-exposure whose FITS EXPTIME did not match the light it
+            // actually collected.
+            throw new InvalidOperationException(
+                $"A {requestedSeconds:0.###}s exposure was requested but the camera's longest timed shutter speed is " +
+                $"{maxTimed:0.###}s and bulb mode is not available.");
         }
 
         return timed

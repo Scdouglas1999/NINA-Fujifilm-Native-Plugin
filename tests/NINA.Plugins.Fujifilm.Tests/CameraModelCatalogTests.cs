@@ -76,4 +76,42 @@ public sealed class CameraModelCatalogTests
             DefaultMaxSensitivity = 12800
         };
     }
+
+    /// <summary>
+    /// Guards the per-model exposure limits. These are the fallbacks used when the camera's own
+    /// capability query yields nothing, so a value the hardware cannot deliver is advertised to
+    /// N.I.N.A. as achievable. Every supported body documents a 60-minute bulb ceiling.
+    /// </summary>
+    [Fact]
+    public void ShippedConfigs_DeclareAchievableExposureLimits()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "TestData", "CameraConfigs");
+        var configs = Directory.GetFiles(path, "*.json")
+            .Select(file => JsonSerializer.Deserialize<CameraConfig>(File.ReadAllText(file)))
+            .Where(config => config is not null)
+            .Select(config => config!)
+            .ToArray();
+
+        Assert.NotEmpty(configs);
+
+        foreach (var config in configs)
+        {
+            Assert.True(config.DefaultMaxExposure == 3600.0,
+                $"{config.ModelName}: every supported body documents a 60 minute bulb ceiling, found {config.DefaultMaxExposure}.");
+
+            Assert.True(config.DefaultMinExposure > 0 && config.DefaultMinExposure < config.DefaultMaxExposure,
+                $"{config.ModelName}: minimum exposure {config.DefaultMinExposure} is not below the maximum.");
+
+            // The declared minimum must be a shutter speed the SDK can actually express.
+            var reciprocal = 1.0 / config.DefaultMinExposure;
+            Assert.True(Math.Abs(reciprocal - Math.Round(reciprocal)) < 0.5,
+                $"{config.ModelName}: minimum exposure {config.DefaultMinExposure} is not a whole-fraction shutter speed.");
+
+            Assert.True(config.DefaultMinSensitivity is >= 80 and <= 400,
+                $"{config.ModelName}: base ISO {config.DefaultMinSensitivity} is outside the range Fujifilm bodies use.");
+            Assert.True(config.DefaultMaxSensitivity >= config.DefaultMinSensitivity,
+                $"{config.ModelName}: maximum ISO is below the minimum.");
+        }
+    }
 }
+

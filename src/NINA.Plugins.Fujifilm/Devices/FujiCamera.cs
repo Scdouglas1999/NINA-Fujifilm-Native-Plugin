@@ -919,19 +919,16 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
         FujifilmSdkWrapper.CheckResult(_session.Handle, countResult, nameof(FujifilmSdkWrapper.XSDK_CapShutterSpeed));
         bool sdkBulbCapable = bulbCapable != 0; // Store SDK result temporarily
 
-        _bulbCapable = sdkBulbCapable;
+        // XSDK_CapShutterSpeed's bulb flag is not trustworthy: it came back "not capable" on every
+        // probe of every camera in the diagnostics logs, including sessions that went on to run a
+        // successful bulb exposure moments later. Every model this plugin supports has a mechanical
+        // bulb mode, which is what DefaultBulbCapable records, so treat the model configuration as
+        // authoritative when the SDK denies bulb support.
+        _bulbCapable = sdkBulbCapable || _config?.DefaultBulbCapable == true;
         _diagnostics.RecordEvent("Camera", $"Bulb capability: SDK={sdkBulbCapable}, Config={_config?.DefaultBulbCapable}, Final={_bulbCapable}");
 
         if (count == 0)
         {
-            // If the SDK returns no timed shutter codes at all, keep the conservative
-            // model default as a last-resort bulb hint. An explicit SDK "not bulb
-            // capable" result above is not overridden.
-            if (_config?.DefaultBulbCapable == true)
-            {
-                _bulbCapable = true;
-                _diagnostics.RecordEvent("Camera", "SDK returned 0 shutter codes, using config DefaultBulbCapable=true");
-            }
             return Array.Empty<int>();
         }
 
@@ -1286,10 +1283,12 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
 
                 var buffer = new byte[info.lDataSize];
                 var handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+                var readSucceeded = false;
                 try
                 {
                     var readResult = FujifilmSdkWrapper.XSDK_ReadImage(_session.Handle, handle.AddrOfPinnedObject(), (uint)buffer.Length);
                     FujifilmSdkWrapper.CheckResult(_session.Handle, readResult, nameof(FujifilmSdkWrapper.XSDK_ReadImage));
+                    readSucceeded = true;
 
                     _diagnostics.RecordEvent("Camera", $"Downloaded RAW frame {info.lImagePixWidth}x{info.lImagePixHeight} bytes={buffer.Length}");
                     return new RawCaptureResult(buffer, info.lImagePixWidth, info.lImagePixHeight, info.lFormat, info.lImageBitDepth, 0, 0, 0.0, 0);
@@ -1297,10 +1296,17 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
                 finally
                 {
                     handle.Free();
-                    var deleteResult = FujifilmSdkWrapper.XSDK_DeleteImage(_session.Handle);
-                    if (deleteResult != FujifilmSdkWrapper.XSDK_COMPLETE)
+
+                    // XSDK_ReadImage takes the frame from the top of the buffer and deletes it, so
+                    // deleting again after a successful read either fails harmlessly or removes the
+                    // next frame. Only clean up when the read did not complete.
+                    if (!readSucceeded)
                     {
-                        _diagnostics.RecordEvent("Camera", $"XSDK_DeleteImage returned {deleteResult}");
+                        var deleteResult = FujifilmSdkWrapper.XSDK_DeleteImage(_session.Handle);
+                        if (deleteResult != FujifilmSdkWrapper.XSDK_COMPLETE)
+                        {
+                            _diagnostics.RecordEvent("Camera", $"XSDK_DeleteImage after failed read returned {deleteResult}");
+                        }
                     }
                 }
             }
