@@ -166,4 +166,50 @@ public sealed class FocusTravelMapTests
         Assert.Equal(415, map.TravelMax);
         Assert.Equal(30, map.InfinityPosition);
     }
+
+    /// <summary>
+    /// Requests are quantised to the lens' minimum drive step, so a position round trip is exact
+    /// only when that step is 1. The contract is that it never drifts by more than one step.
+    /// Values here are a real lens' capability block: INF=-1004, MOD=6995, over-search 333/365,
+    /// minimum drive step 3 - note the negative infinity pulse, which is entirely normal.
+    /// </summary>
+    [Fact]
+    public void RoundTripStaysWithinOneDriveStep()
+    {
+        var map = new FocusTravelMap(-1004, 6995, 333, 365, minDriveStep: 3);
+
+        Assert.Equal(8697, map.Range);
+        Assert.Equal(333, map.InfinityPosition);
+
+        for (var position = 0; position <= map.Range; position++)
+        {
+            var roundTripped = map.ToPosition(map.ToPulse(position));
+            Assert.True(Math.Abs(roundTripped - position) <= map.Step,
+                $"position {position} round-tripped to {roundTripped}, more than {map.Step} away");
+        }
+    }
+
+    [Fact]
+    public void RoundTripIsExactWhenTheLensCanDriveSinglePulses()
+    {
+        var map = new FocusTravelMap(-1004, 6995, 333, 365, minDriveStep: 1);
+
+        for (var position = 0; position <= map.Range; position += 7)
+        {
+            Assert.Equal(position, map.ToPosition(map.ToPulse(position)));
+        }
+    }
+
+    [Fact]
+    public void NegativeInfinityPulseIsHandled()
+    {
+        // Nothing requires the SDK's infinity pulse to be positive, and on real hardware it is not.
+        var map = new FocusTravelMap(-1004, 6995, 333, 365, 3);
+
+        Assert.Equal(-1337, map.TravelMin);
+        Assert.Equal(7360, map.TravelMax);
+        Assert.Equal(0, map.ToPosition(-1337));
+        Assert.Equal(map.Range, map.ToPosition(7360));
+    }
 }
+

@@ -77,15 +77,10 @@ internal static class FujifilmSdkWrapper
     // ========== Battery Info API (from XAPIOpt.h) ==========
     public const int API_CODE_CheckBatteryInfo = 0x4055;
 
-    // Battery API parameter values - model specific:
-    // Confirmed 8-output models include X-T5, X-H2/H2S, X-S20, X-M5, and GFX100 variants.
-    // Confirmed 6-output models include X-T3/T4, X-S10, X-Pro3, GFX50S/50R/50SII.
-    // The param value represents the number of output values the API supports
-    // For body battery info/ratio, we try param 1 first, then model-specific values
-    public const int API_PARAM_CheckBatteryInfo_Body = 1;        // Body battery info (status code)
-    public const int API_PARAM_CheckBatteryInfo_BodyRatio = 4;   // Body battery ratio (0-100%)
-    public const int API_PARAM_CheckBatteryInfo_NewModels = 8;   // For X-T5, X-H2, etc.
-    public const int API_PARAM_CheckBatteryInfo_OldModels = 6;   // For X-T3, X-T4, etc.
+    // The API parameter is the number of output values the call produces: current bodies return 8
+    // and older ones 6. Which applies is discovered by asking the camera - see
+    // FujifilmBatteryProtocol - rather than from a list of model names, so a model the plugin has
+    // never seen still reports its battery.
 
     // Power Capacity Status Codes (from XAPIOpt.h lines 1234-1247)
     public const int SDK_POWERCAPACITY_EMPTY = 0x0000;      // Empty
@@ -132,9 +127,11 @@ internal static class FujifilmSdkWrapper
     public const int XSDK_LIVEVIEW_QUALITY_BASIC = 0x0003;
 
     // ========== Live View Size Constants ==========
-    public const int XSDK_LIVEVIEW_SIZE_L = 0x0001;   // 1280px
-    public const int XSDK_LIVEVIEW_SIZE_M = 0x0002;   // 800px
-    public const int XSDK_LIVEVIEW_SIZE_S = 0x0003;   // 640px
+    // Large/Medium/Small. The pixel dimensions differ by model and sensor aspect ratio, so they
+    // are read from a decoded frame rather than assumed.
+    public const int XSDK_LIVEVIEW_SIZE_L = 0x0001;
+    public const int XSDK_LIVEVIEW_SIZE_M = 0x0002;
+    public const int XSDK_LIVEVIEW_SIZE_S = 0x0003;
 
     // ========== Capture Quality API Codes (XAPIOpt.h) ==========
     public const int API_CODE_SetLongExposureNR = 0x2145;
@@ -546,18 +543,6 @@ internal static class FujifilmSdkWrapper
         out int plBodyBattery2Info,
         out int plBodyBattery2Ratio2);
 
-    // Battery Info overload for models whose headers specify 6 output parameters.
-    [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetProp")]
-    public static extern int XSDK_GetProp_Battery6(
-        IntPtr hCamera,
-        int lAPICode,
-        int lAPIParam,
-        out int plBodyBatteryInfo,
-        out int plGripBatteryInfo,
-        out int plGripBattery2Info,
-        out int plBodyBatteryRatio,
-        out int plGripBatteryRatio,
-        out int plGripBattery2Ratio);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
     public struct XSDK_DeviceInformation

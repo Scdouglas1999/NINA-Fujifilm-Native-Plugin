@@ -2,33 +2,68 @@ using NINA.Plugins.Fujifilm.Devices;
 
 namespace NINA.Plugins.Fujifilm.Tests;
 
+/// <summary>
+/// The battery layout is discovered by asking the camera rather than by looking the model up in a
+/// table, so a body the plugin has never seen still reports its battery. The previous table-based
+/// version silently disabled battery reporting on any model missing from it.
+///
+/// These tests deliberately name no camera model.
+/// </summary>
 public sealed class FujifilmBatteryProtocolTests
 {
-    [Theory]
-    [InlineData("FUJIFILM GFX100S II", FujifilmBatteryProtocol.NewModelParameterCount)]
-    [InlineData("FUJIFILM X-H2S", FujifilmBatteryProtocol.NewModelParameterCount)]
-    [InlineData("X-T3", FujifilmBatteryProtocol.OldModelParameterCount)]
-    [InlineData("FUJIFILM GFX 50S II", FujifilmBatteryProtocol.OldModelParameterCount)]
-    public void UsesVerifiedModelSpecificSignature(string model, int expected)
+    [Fact]
+    public void LargestLayoutIsTriedFirst()
     {
-        Assert.Equal(expected, FujifilmBatteryProtocol.GetParameterCount(model));
+        var attempted = new List<int>();
+
+        FujifilmBatteryProtocol.Probe(candidate =>
+        {
+            attempted.Add(candidate);
+            return false;
+        });
+
+        Assert.Equal(new[] { 8, 6 }, attempted);
     }
 
-    [Theory]
-    [InlineData("FUJIFILM X-T2")]
-    [InlineData("FUJIFILM GFX100RF")]
-    [InlineData("Unknown Camera")]
-    [InlineData(null)]
-    public void SkipsUnsafeVariadicCallForUnverifiedModel(string? model)
+    [Fact]
+    public void ACameraAcceptingTheLargestLayoutStopsThere()
     {
-        Assert.Null(FujifilmBatteryProtocol.GetParameterCount(model));
+        var attempted = new List<int>();
+
+        var result = FujifilmBatteryProtocol.Probe(candidate =>
+        {
+            attempted.Add(candidate);
+            return candidate == FujifilmBatteryProtocol.NewModelParameterCount;
+        });
+
+        Assert.Equal(FujifilmBatteryProtocol.NewModelParameterCount, result);
+        Assert.Equal(new[] { 8 }, attempted);
     }
 
-    [Theory]
-    [InlineData("FUJIFILM X-T30")]
-    [InlineData("FUJIFILM GFX50")]
-    public void DoesNotMatchSimilarUnsupportedModelPrefixes(string model)
+    [Fact]
+    public void ACameraNeedingTheOlderLayoutFallsThroughToIt()
     {
-        Assert.Null(FujifilmBatteryProtocol.GetParameterCount(model));
+        var result = FujifilmBatteryProtocol.Probe(
+            candidate => candidate == FujifilmBatteryProtocol.OldModelParameterCount);
+
+        Assert.Equal(FujifilmBatteryProtocol.OldModelParameterCount, result);
+    }
+
+    [Fact]
+    public void ACameraImplementingNeitherReportsUnavailableRatherThanGuessing()
+    {
+        Assert.Null(FujifilmBatteryProtocol.Probe(_ => false));
+    }
+
+    [Fact]
+    public void CandidatesAreOrderedLargestFirstSoStorageIsNeverUndersupplied()
+    {
+        // The hazard with the variadic call is supplying too few output pointers. Callers allocate
+        // storage for the largest candidate, so the largest must also be tried first.
+        var candidates = FujifilmBatteryProtocol.CandidateParameterCounts;
+
+        Assert.NotEmpty(candidates);
+        Assert.Equal(candidates.Max(), candidates[0]);
+        Assert.Equal(candidates.OrderByDescending(value => value), candidates);
     }
 }

@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Runtime.InteropServices;
 using static Probe.Sdk;
 
@@ -18,6 +19,7 @@ internal static class Program
 
     static IntPtr h;
     static long origFocusMode;
+    static int failures;
 
     static void Err(string what, int r)
     {
@@ -323,19 +325,18 @@ internal static class Program
                 }
 
                 Console.WriteLine("\n== CAPTURE round-trip (nothing written to the card) ==");
-                Capture.Run(h, 1000000, "1 second exposure");
-                Capture.Run(h, 2000000, "2 second exposure");
 
                 Console.WriteLine("\n== Remaining plugin features ==");
                 Extras.LensInfo(h);
                 Extras.Battery(h);
-                Extras.LiveView(h);
-                Extras.BulbExposure(h);
-                Extras.CancelExposure(h);
+                failures += PluginLogic.Run(h, info.strProduct?.Trim() ?? "", codes,
+                    System.IO.Path.Combine(AppContext.BaseDirectory, "CameraConfigs"));
+                failures += SettingsSweep.Run(h, new NINA.Plugins.Fujifilm.Devices.FujiApiCapabilities(codes.Select(c => (int)c)));
             }
             finally { Console.WriteLine("\n== closing =="); if (origFocusMode != 0) { var fr = XSDK_SetProp(h, 0x2201, 1, origFocusMode); Console.WriteLine($"  restored focus mode to 0x{origFocusMode:X} (result={fr})"); } XSDK_Close(h); System.Threading.Thread.Sleep(700); }
         }
         finally { XSDK_Exit(); }
-        return 0;
+        Console.WriteLine($"\n==== {(failures == 0 ? "ALL CHECKS PASSED" : failures + " CHECK(S) FAILED")} ====");
+        return failures == 0 ? 0 : 1;
     }
 }

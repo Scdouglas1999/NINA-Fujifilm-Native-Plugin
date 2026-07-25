@@ -35,12 +35,21 @@ internal static class Extras
 
     public static void Battery(IntPtr h)
     {
-        Console.WriteLine("\n  -- battery (GFX100S II should use the 8-value form) --");
-        var r8 = XSDK_GetProp_Battery8(h, API_CODE_CheckBatteryInfo, 8, out var b1, out var b2, out var b3, out var b4, out var b5, out var b6, out var b7, out var b8);
-        Console.WriteLine($"    8-value form -> result={r8}: bodyInfo={b1} gripInfo={b2} grip2Info={b3} bodyRatio={b4} gripRatio={b5} grip2Ratio={b6} body2Info={b7} body2Ratio={b8}");
-        if (r8 != 0) Err(h, "battery(8)", r8);
-        var r6 = XSDK_GetProp_Battery6(h, API_CODE_CheckBatteryInfo, 6, out var c1, out var c2, out var c3, out var c4, out var c5, out var c6);
-        Console.WriteLine($"    6-value form -> result={r6}: {c1} {c2} {c3} {c4} {c5} {c6}");
+        // Mirrors the plugin: probe the candidate layouts largest-first, always supplying storage
+        // for the largest, and let the camera decide. No model name is consulted.
+        Console.WriteLine("\n  -- battery (adaptive probe, no model list) --");
+        int? accepted = null;
+        foreach (var candidate in new[] { 8, 6 })
+        {
+            var r = XSDK_GetProp_Battery8(h, API_CODE_CheckBatteryInfo, candidate,
+                out var b1, out var b2, out var b3, out var b4, out var b5, out var b6, out var b7, out var b8);
+            Console.WriteLine($"    probe {candidate} output values -> result={r}" +
+                (r == 0 ? $"  ACCEPTED: bodyInfo=0x{b1:X} bodyRatio={b4} grip={b2}/{b5}" : "  (rejected)"));
+            if (r == 0) { accepted = candidate; break; }
+        }
+        Console.WriteLine(accepted is null
+            ? "    => no known layout accepted; the plugin reports battery unavailable"
+            : $"    => VERIFIED: camera accepts the {accepted}-value layout, discovered without a model list");
     }
 
     public static void LiveView(IntPtr h)

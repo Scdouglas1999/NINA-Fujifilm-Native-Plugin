@@ -1,52 +1,56 @@
 using System;
-using System.Linq;
-using NINA.Plugins.Fujifilm.Configuration;
+using System.Collections.Generic;
 
 namespace NINA.Plugins.Fujifilm.Devices;
 
 /// <summary>
-/// Selects the only battery-query signatures verified in Fujifilm's model headers.
-/// Calling the variadic native API with the wrong argument count is unsafe, so unknown
-/// and legacy models deliberately return <see langword="null"/>.
+/// Works out how many values a camera's battery query returns, by asking the camera rather than by
+/// consulting a list of model names.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <c>CheckBatteryInfo</c>'s API parameter is the number of output values the call produces: 8 on
+/// current bodies and 6 on older ones. A hardcoded model list gets this wrong for every model it has
+/// not been taught about - it silently disabled battery reporting on the GFX100RF, for instance -
+/// and needs editing for every camera Fujifilm releases.
+/// </para>
+/// <para>
+/// Probing is safe as long as storage for the largest layout is always supplied. The hazard with a
+/// variadic call is providing <i>too few</i> output pointers, because the SDK then writes through
+/// whatever happens to be in the remaining argument slots. Passing the full eight and varying only
+/// the declared count never does that: a camera that fills six simply leaves the last two alone.
+/// The SDK validates the count and refuses one it does not implement, which is what makes the probe
+/// conclusive rather than a guess.
+/// </para>
+/// </remarks>
 internal static class FujifilmBatteryProtocol
 {
     internal const int OldModelParameterCount = 6;
     internal const int NewModelParameterCount = 8;
 
-    private static readonly string[] EightParameterModels =
-    {
-        "GFX100SII", "GFX100II", "GFX100S", "GFX100",
-        "X-H2S", "X-H2", "X-T5", "X-S20", "X-M5"
-    };
+    /// <summary>Counts to try, largest first.</summary>
+    internal static readonly IReadOnlyList<int> CandidateParameterCounts =
+        new[] { NewModelParameterCount, OldModelParameterCount };
 
-    private static readonly string[] SixParameterModels =
+    /// <summary>
+    /// Interprets the result of probing each candidate count.
+    /// </summary>
+    /// <param name="probe">
+    /// Called with a candidate count; returns true when the camera accepted it.
+    /// </param>
+    /// <returns>The accepted count, or null when the camera implements neither.</returns>
+    internal static int? Probe(Func<int, bool> probe)
     {
-        "GFX50SII", "GFX50S", "GFX50R",
-        "X-PRO3", "X-T4", "X-T3", "X-S10"
-    };
+        ArgumentNullException.ThrowIfNull(probe);
 
-    internal static int? GetParameterCount(string? modelName)
-    {
-        var normalized = CameraModelRules.NormalizeName(modelName ?? string.Empty);
-
-        if (EightParameterModels.Any(model => IsModelMatch(normalized, model)))
+        foreach (var candidate in CandidateParameterCounts)
         {
-            return NewModelParameterCount;
-        }
-
-        if (SixParameterModels.Any(model => IsModelMatch(normalized, model)))
-        {
-            return OldModelParameterCount;
+            if (probe(candidate))
+            {
+                return candidate;
+            }
         }
 
         return null;
-    }
-
-    private static bool IsModelMatch(string normalizedProductName, string knownModel)
-    {
-        var normalizedKnownModel = CameraModelRules.NormalizeName(knownModel);
-        return normalizedProductName.Equals(normalizedKnownModel, StringComparison.OrdinalIgnoreCase) ||
-               normalizedProductName.EndsWith(normalizedKnownModel, StringComparison.OrdinalIgnoreCase);
     }
 }

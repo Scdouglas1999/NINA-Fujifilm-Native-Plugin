@@ -41,6 +41,7 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
     private bool _bulbCapable;
     private FujiApiCapabilities _apiCapabilities = FujiApiCapabilities.Unknown;
     private bool _longExposureNoiseReductionOn;
+    private int? _batteryParameterCount;
     private const double DefaultMinExposureSeconds = 0.001;
     private int _bufferShootCapacity;
     private int _bufferTotalCapacity;
@@ -337,10 +338,6 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
         if (_config == null)
         {
             _diagnostics.RecordEvent("Camera", $"No configuration found for camera '{descriptor.DisplayName}'. Using defaults.");
-        }
-        else if (_config.ModelName.Equals("X-T2", StringComparison.OrdinalIgnoreCase))
-        {
-            _diagnostics.RecordEvent("Camera", "X-T2 selected: using the legacy FF0002API model module. This path is experimental and battery reporting is intentionally unavailable.");
         }
 
         if (_config != null)
@@ -762,51 +759,58 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
 
         try
         {
-            var modelName = _config?.ModelName ?? _metadata.ProductName ?? string.Empty;
-            var parameterCount = FujifilmBatteryProtocol.GetParameterCount(modelName);
-            if (parameterCount == null)
+            int bodyBatteryInfo = 0, gripBatteryInfo = 0, gripBattery2Info = 0;
+            int bodyBatteryRatio = -1, gripBatteryRatio = 0, gripBattery2Ratio = 0;
+            var result = FujifilmSdkWrapper.XSDK_ERROR;
+
+            // Ask the camera which battery layout it implements rather than looking the model up in
+            // a table. Always hand the SDK storage for the largest layout: supplying too few output
+            // pointers to a variadic call is what would be unsafe, and varying only the declared
+            // count never does that.
+            _batteryParameterCount ??= FujifilmBatteryProtocol.Probe(candidate =>
+            {
+                var probeResult = FujifilmSdkWrapper.XSDK_GetProp_Battery8(
+                    _session.Handle,
+                    FujifilmSdkWrapper.API_CODE_CheckBatteryInfo,
+                    candidate,
+                    out var info, out var grip, out var grip2,
+                    out var ratio, out var gripRatio, out var grip2Ratio,
+                    out _, out _);
+
+                if (probeResult != FujifilmSdkWrapper.XSDK_COMPLETE)
+                {
+                    return false;
+                }
+
+                bodyBatteryInfo = info;
+                gripBatteryInfo = grip;
+                gripBattery2Info = grip2;
+                bodyBatteryRatio = ratio;
+                gripBatteryRatio = gripRatio;
+                gripBattery2Ratio = grip2Ratio;
+                result = probeResult;
+                _diagnostics.RecordEvent("Camera", $"Battery query accepted with {candidate} output values: bodyInfo=0x{info:X}, bodyRatio={ratio}");
+                return true;
+            });
+
+            if (_batteryParameterCount == null)
             {
                 _metadata.BatteryLevel = -1;
                 _metadata.BatteryStatus = "Unavailable";
-                _diagnostics.RecordEvent("Camera", $"Battery query skipped for '{modelName}': the SDK argument layout has not been verified for this model.");
+                _diagnostics.RecordEvent("Camera", "This camera did not accept any known battery query layout; battery reporting is unavailable.");
                 return;
             }
 
-            int result;
-            int bodyBatteryInfo, gripBatteryInfo, gripBattery2Info;
-            int bodyBatteryRatio, gripBatteryRatio, gripBattery2Ratio;
-
-            if (parameterCount == FujifilmBatteryProtocol.NewModelParameterCount)
+            // Subsequent refreshes reuse the layout the camera already accepted.
+            if (result != FujifilmSdkWrapper.XSDK_COMPLETE)
             {
                 result = FujifilmSdkWrapper.XSDK_GetProp_Battery8(
                     _session.Handle,
                     FujifilmSdkWrapper.API_CODE_CheckBatteryInfo,
-                    FujifilmSdkWrapper.API_PARAM_CheckBatteryInfo_NewModels,
-                    out bodyBatteryInfo,
-                    out gripBatteryInfo,
-                    out gripBattery2Info,
-                    out bodyBatteryRatio,
-                    out gripBatteryRatio,
-                    out gripBattery2Ratio,
-                    out _,  // plBodyBattery2Info
-                    out _); // plBodyBattery2Ratio2
-
-                _diagnostics.RecordEvent("Camera", $"Battery8 call: result={result}, bodyInfo=0x{bodyBatteryInfo:X}, bodyRatio={bodyBatteryRatio}");
-            }
-            else
-            {
-                result = FujifilmSdkWrapper.XSDK_GetProp_Battery6(
-                    _session.Handle,
-                    FujifilmSdkWrapper.API_CODE_CheckBatteryInfo,
-                    FujifilmSdkWrapper.API_PARAM_CheckBatteryInfo_OldModels,
-                    out bodyBatteryInfo,
-                    out gripBatteryInfo,
-                    out gripBattery2Info,
-                    out bodyBatteryRatio,
-                    out gripBatteryRatio,
-                    out gripBattery2Ratio);
-
-                _diagnostics.RecordEvent("Camera", $"Battery6 call: result={result}, bodyInfo=0x{bodyBatteryInfo:X}, bodyRatio={bodyBatteryRatio}");
+                    _batteryParameterCount.Value,
+                    out bodyBatteryInfo, out gripBatteryInfo, out gripBattery2Info,
+                    out bodyBatteryRatio, out gripBatteryRatio, out gripBattery2Ratio,
+                    out _, out _);
             }
 
             if (result == FujifilmSdkWrapper.XSDK_COMPLETE)
@@ -1060,14 +1064,24 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
                     return BuildFallbackIsoArray();
                 }
 
-                var sensitivities = new List<int>(count);
+                var reported = new List<int>(count);
                 for (int i = 0; i < count; i++)
                 {
-                    var val = Marshal.ReadInt32(buffer, i * sizeof(int));
-                    sensitivities.Add(val);
+                    reported.Add(Marshal.ReadInt32(buffer, i * sizeof(int)));
                 }
-                
-                _diagnostics.RecordEvent("Camera", $"QuerySensitivityValues: Successfully queried {sensitivities.Count} ISO values from camera.");
+
+                // The list mixes real sensitivities with auto-ISO modes; keep only the former.
+                var sensitivities = FujifilmSensitivityCatalog.SelectFixedSensitivities(reported, out var autoModes);
+
+                if (sensitivities.Count == 0)
+                {
+                    _diagnostics.RecordEvent("Camera", $"QuerySensitivityValues: the camera reported {count} entries but none were fixed sensitivities. Using fallback ISO values.");
+                    return BuildFallbackIsoArray();
+                }
+
+                _diagnostics.RecordEvent("Camera",
+                    $"QuerySensitivityValues: {sensitivities.Count} fixed ISO values from the camera ({sensitivities.Min()}-{sensitivities.Max()})" +
+                    (autoModes > 0 ? $"; ignored {autoModes} auto-ISO mode(s)." : "."));
                 return sensitivities;
             }
             finally
@@ -1622,6 +1636,7 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
     public async Task DisconnectAsync()
     {
         _registry.RegisterCamera(null);
+        _batteryParameterCount = null;
 
         if (_session != null && _session.Handle != IntPtr.Zero)
         {

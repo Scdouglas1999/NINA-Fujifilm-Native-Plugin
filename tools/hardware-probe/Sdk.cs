@@ -36,10 +36,10 @@ internal static class Sdk
 
     [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_GetLensInfo(IntPtr h, out LensInformation info);
     [DllImport(L, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetProp")] public static extern int XSDK_GetProp_Battery8(IntPtr h, long code, long param, out long a, out long b, out long c, out long d, out long e, out long f, out long g, out long i);
-    [DllImport(L, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetProp")] public static extern int XSDK_GetProp_Battery6(IntPtr h, long code, long param, out long a, out long b, out long c, out long d, out long e, out long f);
 
     [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_GetMode(IntPtr h, out long m);
     [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_GetAEMode(IntPtr h, out long m);
+    [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_SetSensitivity(IntPtr h, long v);
     [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_GetSensitivity(IntPtr h, out long v);
     [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_CapSensitivity(IntPtr h, ref long plNum, IntPtr pl);
 

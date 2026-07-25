@@ -25,9 +25,12 @@ public static class FocusDistanceFormatter
             return "unknown";
         }
 
-        // The SDK uses a saturated value for "infinity"; anything past a kilometre is infinity as
-        // far as any lens this plugin drives is concerned.
-        if (raw >= 1_000_000)
+        // Lenses report the far end of an "x to infinity" limiter as a saturated value - 0xFFFFFF
+        // in the readings taken so far. Rather than pin that to one lens' sentinel, treat anything
+        // beyond a kilometre as infinity: no photographic lens has a finite limiter out there, so
+        // this holds whatever value a given body chooses to saturate at.
+        const int beyondAnyLensDistance = 1_000_000;   // 1 km, in mm or 1/1000 ft
+        if (raw >= beyondAnyLensDistance)
         {
             return "infinity";
         }
