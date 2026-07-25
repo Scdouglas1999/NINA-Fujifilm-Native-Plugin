@@ -7,7 +7,7 @@
     <AssemblyName>NINA.Plugins.Fujifilm</AssemblyName>
     <RootNamespace>NINA.Plugins.Fujifilm</RootNamespace>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-    <Version>3.0.2.0</Version>
+    <Version>3.0.3.0</Version>
     <FujifilmSdkDir Condition="'$(FujifilmSdkDir)' == '' and '$(FUJIFILM_SDK_DIR)' != ''">$(FUJIFILM_SDK_DIR)</FujifilmSdkDir>
   </PropertyGroup>
 

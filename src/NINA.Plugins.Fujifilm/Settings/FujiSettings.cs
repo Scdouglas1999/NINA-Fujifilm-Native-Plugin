@@ -63,6 +63,15 @@ public sealed class FujiSettings
     /// </summary>
     public LiveViewSize LiveViewSize { get; set; } = LiveViewSize.Large;
 
+    /// <summary>
+    /// Switch the camera into manual focus mode while the focuser is connected.
+    /// XSDK_SetFocusPos targets manual focus mode, and a body left in AF-S/AF-C refocuses by
+    /// itself whenever the shutter is half-pressed to start an exposure, which moves the lens
+    /// away from the position NINA commanded. The previous mode is restored on disconnect.
+    /// Disable this only if a body refuses to focus with the setting enabled.
+    /// </summary>
+    public bool ForceManualFocusMode { get; set; } = true;
+
     public void Normalize()
     {
         BulbReleaseDelayMs = Math.Clamp(BulbReleaseDelayMs, 0, 5000);

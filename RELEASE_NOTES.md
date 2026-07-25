@@ -1,3 +1,47 @@
+# 3.0.3.0
+
+## Focuser positioning
+
+This release fixes the focuser reporting inconsistent and sometimes negative positions, and
+autofocus runs failing when the best focus sat close to position 0.
+
+- **The full lens travel is now available, including the range past infinity.** `XSDK_CapFocusPos`
+  reports four values that describe the focus axis: the nominal infinity and minimum-object-distance
+  marks, plus the "over search" travel that extends beyond each of them. Earlier releases built the
+  usable range from the two nominal marks alone and discarded the over-search values, so the travel
+  past infinity was unreachable. Because that region is exactly where a lens sits when focused for
+  astronomy — and further still on a full-spectrum body, whose focus falls beyond the visible-light
+  infinity mark — the driver was clamping away the part of the range that matters most.
+- **Positions are never negative.** A lens parked past the infinity mark produced a position below
+  the advertised minimum, which surfaced in N.I.N.A. as a negative number and aborted autofocus
+  runs. Positions are now reported against the true start of travel and are always within
+  `0 .. MaxStep`.
+- **Infinity is no longer pinned to position 0.** The infinity mark now sits at a consistent
+  positive position with the over-search travel available below it, so an autofocus run has room to
+  sample both sides of focus instead of hitting the bottom of the range while building its curve.
+  The focuser description in N.I.N.A. shows the infinity position and how much past-infinity travel
+  the attached lens reports.
+- **The camera is held in manual focus while the focuser is connected.** Starting an exposure
+  half-presses the shutter, and a body left in AF-S or AF-C responds by refocusing on its own,
+  moving the lens away from the position N.I.N.A. set. `XSDK_SetFocusPos` is documented as setting
+  the focus position for manual focus mode. The previous mode is restored on disconnect, and the
+  behaviour can be turned off under Focuser in the plugin options.
+- Requests that fall outside the physical travel are still clamped, but are now logged as warnings
+  naming the limit that was hit, so a truncated autofocus curve is diagnosable from the log.
+- Focus diagnostics now record the over-search values, the computed travel, the infinity position,
+  and the camera's focus mode on connect.
+
+Note that the Fujifilm SDK states the focus pulse count "is not absolute, but fluctuates with
+temperature and a variety of other conditions". Positions are therefore relative to the capability
+block the lens reports each session and are not guaranteed to be identical across power cycles; the
+driver re-reads that block on every connection so the mapping stays consistent within a session.
+
+## Verification
+
+- Adds regression tests covering the focus travel mapping, built on focus capability values captured
+  from real hardware, including the past-infinity case that previously produced negative positions
+  and an autofocus sweep around the infinity mark.
+
 # 3.0.2.0
 
 ## X-T2 compatibility

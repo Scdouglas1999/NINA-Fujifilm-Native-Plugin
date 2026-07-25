@@ -126,6 +126,30 @@
                 </StackPanel>
             </StackPanel>
 
+            <!-- Focuser Settings -->
+            <TextBlock Text="Focuser" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8" />
+            <StackPanel Margin="0,0,0,24">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                    <CheckBox IsChecked="{Binding Settings.ForceManualFocusMode, Mode=TwoWay}"
+                              VerticalAlignment="Center"
+                              Margin="0,0,8,0" />
+                    <TextBlock Text="Force manual focus mode while connected (recommended)"
+                               VerticalAlignment="Center"
+                               FontWeight="SemiBold" />
+                </StackPanel>
+                <TextBlock TextWrapping="Wrap"
+                           Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                           FontSize="11"
+                           Margin="24,0,0,0">
+                    Starting an exposure half-presses the shutter. With the body left in AF-S or AF-C
+                    that makes the camera refocus on its own, dragging the lens away from the position
+                    NINA set and changing the reported position between sessions.
+                    <LineBreak />
+                    The previous focus mode is restored when the focuser disconnects.
+                    Turn this off only if your body refuses to focus with it enabled.
+                </TextBlock>
+            </StackPanel>
+
             <!-- Preview Quality Settings -->
             <TextBlock Text="Preview Quality" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8" />
             <StackPanel Margin="0,0,0,24">

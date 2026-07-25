@@ -60,14 +60,22 @@ public class FujiFocuserSdkAdapter : IFocuser, INotifyPropertyChanged
     {
         get
         {
-            if (!_connected || string.IsNullOrWhiteSpace(_focuser.LensProductName))
+            if (!_connected)
                 return "Fujifilm Native Focuser";
-            return $"Fujifilm Lens: {_focuser.LensProductName}";
+
+            var lens = string.IsNullOrWhiteSpace(_focuser.LensProductName)
+                ? "Fujifilm Native Focuser"
+                : $"Fujifilm Lens: {_focuser.LensProductName}";
+
+            // Infinity is where astronomical focus lands, so surfacing it lets the user size
+            // their autofocus step count to the travel that actually exists below it.
+            return $"{lens} - travel 0-{_focuser.FocusRange}, infinity mark at {_focuser.InfinityPosition} " +
+                   $"({_focuser.OverSearchInfinity} steps available past infinity)";
         }
     }
 
     public string DriverInfo => "Fujifilm Native Driver";
-    public string DriverVersion => "3.0.2";
+    public string DriverVersion => "3.0.3";
     public int InterfaceVersion => 1;
 
     public bool Absolute => true;

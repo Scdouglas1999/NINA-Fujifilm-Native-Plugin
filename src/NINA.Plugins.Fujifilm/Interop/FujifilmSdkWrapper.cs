@@ -197,15 +197,44 @@ internal static class FujifilmSdkWrapper
     [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetLensVersion")]
     public static extern int XSDK_GetLensVersion(IntPtr hCamera, [MarshalAs(UnmanagedType.LPStr)] StringBuilder pLensVersion);
 
-    // Focus Control API Codes
+    // Focus Control API Codes (XAPIOpt.h: API_CODE_*)
+    public const int XSDK_API_CODE_SetFocusMode = 0x2201;
+    public const int XSDK_API_CODE_GetFocusMode = 0x2202;
     public const int XSDK_API_CODE_SetFocusPos = 0x2207;
     public const int XSDK_API_CODE_GetFocusPos = 0x2208;
+    public const int XSDK_API_CODE_CapFocusMode = 0x2209;
     public const int XSDK_API_CODE_CapFocusPos = 0x2259;
-    
-    // Focus Control API Parameters (consistent across all camera models)
+
+    // Focus Control API Parameters (verified identical across all 18 model headers)
     public const int XSDK_API_PARAM_CapFocusPos = 2;
     public const int XSDK_API_PARAM_SetFocusPos = 1;
     public const int XSDK_API_PARAM_GetFocusPos = 1;
+    public const int XSDK_API_PARAM_SetFocusMode = 1;
+    public const int XSDK_API_PARAM_GetFocusMode = 1;
+    public const int XSDK_API_PARAM_CapFocusMode = 2;
+
+    // Focus Mode constants (XAPIOpt.h: SDK_FOCUS_*)
+    public const int XSDK_FOCUS_MANUAL = 0x0001;
+    public const int XSDK_FOCUS_AFS = 0x8001;
+    public const int XSDK_FOCUS_AFC = 0x8002;
+
+    public static string DescribeFocusMode(int mode) => mode switch
+    {
+        XSDK_FOCUS_MANUAL => "MANUAL",
+        XSDK_FOCUS_AFS => "AF-S",
+        XSDK_FOCUS_AFC => "AF-C",
+        _ => $"Unknown(0x{mode:X})"
+    };
+
+    public static int XSDK_GetFocusMode(IntPtr hCamera, out int plFocusMode)
+    {
+        return XSDK_GetProp(hCamera, XSDK_API_CODE_GetFocusMode, XSDK_API_PARAM_GetFocusMode, out plFocusMode);
+    }
+
+    public static int XSDK_SetFocusMode(IntPtr hCamera, int lFocusMode)
+    {
+        return XSDK_SetProp(hCamera, XSDK_API_CODE_SetFocusMode, XSDK_API_PARAM_SetFocusMode, lFocusMode);
+    }
 
     // Helper methods wrapping generic property functions
     public static int XSDK_CapFocusPos(IntPtr hCamera, out XSDK_FOCUS_POS_CAP focusPosCap)

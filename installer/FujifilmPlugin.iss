@@ -7,7 +7,7 @@
 ;   ISCC.exe installer\FujifilmPlugin.iss
 
 #ifndef MyAppVersion
-#define MyAppVersion "3.0.2.0"
+#define MyAppVersion "3.0.3.0"
 #endif
 
 #define MyAppName "Fujifilm Native Camera Plugin for N.I.N.A."
@@ -49,7 +49,7 @@ VersionInfoProductVersion={#MyAppVersion}
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
-WelcomeLabel2=This will install [name/ver].%n%nThis plugin provides native camera support for Fujifilm X-series and GFX cameras in N.I.N.A. (Nighttime Imaging 'N' Astronomy).%n%nThis release includes X-T2 legacy/experimental support, GFX100RF configuration, and SDK/runtime hardening.%n%nIMPORTANT: Please close N.I.N.A. before continuing.
+WelcomeLabel2=This will install [name/ver].%n%nThis plugin provides native camera support for Fujifilm X-series and GFX cameras in N.I.N.A. (Nighttime Imaging 'N' Astronomy).%n%nThis release fixes focuser positioning: the full lens travel including the past-infinity range is now available, positions are never negative, and the camera is held in manual focus so it cannot refocus on its own between exposures.%n%nIMPORTANT: Please close N.I.N.A. before continuing.
 
 [Files]
 ; Copy the verified plugin publish layout exactly. The Fujifilm SDK runtime files
