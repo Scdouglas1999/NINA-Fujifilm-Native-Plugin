@@ -8,6 +8,13 @@
 
 A native camera integration plugin for [N.I.N.A. (Nighttime Imaging 'N' Astronomy)](https://nighttime-imaging.eu/) that enables direct USB communication with Fujifilm cameras. This plugin bypasses generic ASCOM drivers to interface directly with the camera firmware, providing features and performance not available through standard drivers.
 
+Nothing in the plugin is conditioned on a camera model. What it does is derived from what a body
+reports over USB - the API codes it advertises and the capability lists it returns - so a camera it
+has never seen is treated the same as one it has.
+
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for what changed in each version. **If you are on 3.0.2.0
+or 3.0.3.0, update: those releases capped the maximum exposure at 60 seconds.**
+
 ---
 
 ## Support Development
@@ -24,12 +31,27 @@ Patreon support helps with the unglamorous work that keeps camera plugins useful
 
 ### Camera Control
 
-- **Direct USB Communication**: Connects directly to the camera via USB for reliable, low-latency control
-- **Full Exposure Control**: Supports timed exposures and bulb mode up to 60 minutes
-- **ISO Management**: Queries available ISO values from the camera and allows full programmatic control
-- **16-bit RAW Capture**: Captures full-resolution RAW images with complete sensor data
-- **Battery Monitoring**: Battery display on models whose SDK call layout has been verified
-- **Lens Detection**: Displays attached lens model, focal length, aperture, and OIS (optical image stabilization) status
+- **Direct USB communication** with the camera, bypassing generic ASCOM drivers
+- **Timed and bulb exposures up to 60 minutes.** Sub-exposures longer than the camera's longest
+  timed shutter speed use bulb; bodies advertising the SDK's T-mode codes can time up to an hour
+  natively. An exposure is never silently shortened - a request the camera cannot satisfy fails with
+  an explanation instead
+- **Abort an exposure in progress**, so a sequence can abandon a long sub for cloud or a meridian
+  flip rather than waiting it out. Bodies that refuse the request fall back to waiting
+- **ISO from the camera's own list.** Auto-ISO modes are filtered out, so a sequence cannot hand
+  exposure control back to the camera
+- **RAW bit depth and compression control.** 16-bit for more headroom on faint signal; lossless
+  compression roughly halves the file and the download time between subs
+- **Long Exposure NR is switched off**, and reported if left on. With it enabled the camera shoots a
+  matching dark after every long sub and subtracts it internally, roughly doubling the time per frame
+  and applying calibration you did not choose
+- **Sensor crop mode**, so a high-resolution body can shoot a smaller frame for a small target
+- **Card recording is disabled** while connected, so card writes do not compete with the USB download
+- **Battery reporting** on any body that implements a known query layout
+- **Lens detection**: the attached lens model and whether it has optical stabilisation
+
+Optional features are gated on the list of API codes the connected camera advertises, so a body that
+does not implement one is simply left alone rather than being sent a call it will reject.
 
 ### X-Trans Sensor Support
 
@@ -37,19 +59,25 @@ Patreon support helps with the unglamorous work that keeps camera plugins useful
 - **Non-Destructive Processing**: Preview conversion does not affect saved images; original RAW data is preserved
 - **Correct Metadata**: Writes appropriate `BAYERPAT` and `ROWORDER` FITS headers for compatibility with PixInsight, Siril, and other stacking software
 
-### Experimental Electronic Lens Focuser
+### Electronic Lens Focuser
 
-- **Native Lens Control**: Exposes electronic Fujifilm lenses as focuser devices in N.I.N.A.
-- **Absolute Position Control**: Moves focus to specific positions within the lens mechanical range
-- **N.I.N.A. Focuser Interface**: Camera and focuser now share one reference-counted SDK session; autofocus behavior still needs physical lens validation
-- **Focus Range Detection**: Automatically queries lens focus limits (infinity to close focus)
+- **Native lens control**: exposes electronic Fujifilm lenses as focuser devices in N.I.N.A.
+- **Full mechanical travel**, including the range past infinity. The SDK reports the nominal infinity
+  and close-focus marks plus the "over search" travel beyond each; using only the nominal marks put
+  infinity at position 0 with nothing beneath it, which is where autofocus runs failed
+- **Positions are never negative** and always fall within `0 .. MaxStep`, and the focuser description
+  reports where infinity sits and how much past-infinity travel the lens has
+- **The camera is held in manual focus** while the focuser is connected, so it cannot refocus on its
+  own when an exposure half-presses the shutter. Your original mode is restored on disconnect
+- **Focus limiter awareness**: if a limiter is set so autofocus cannot reach infinity, the plugin
+  says so rather than leaving you to work it out
+- Camera and focuser share one reference-counted SDK session, so disconnecting either does not
+  invalidate the other
 
 ### Configuration Options
 
-- **Demosaic Quality**: Selectable preview quality (Fast/Balanced/High Quality) to balance speed and image quality
-- **RAF Sidecar Export**: Optional saving of native Fujifilm RAF files alongside processed images
-- **Extended FITS Metadata**: Adds Fujifilm-specific metadata to FITS headers
-- **Live View Tuning**: Selectable SDK image size and quality
+See [Plugin Settings](#plugin-settings) for the full list, including RAW quality, Long Exposure NR,
+crop mode, demosaic quality, live view tuning and focuser behaviour.
 
 ---
 
@@ -80,7 +108,7 @@ Static inspection confirms that module exports every core SDK entry point this p
 | Timed/bulb capture and RAW download | Required SDK exports present; hardware validation needed |
 | Electronic-lens focus control | Required SDK exports present; shared-session implementation complete; lens/firmware and hardware validation still required |
 | Live view | Required SDK exports present; implementation complete but physical X-T2 validation still required |
-| Battery percentage | Disabled because the X-T2 variadic argument layout is not documented in the available headers |
+| Battery percentage | Attempted like any other body. The plugin asks the camera which query layout it implements instead of consulting a list of model names, so if the X-T2 accepts one it will report; if not, battery is shown as unavailable |
 
 An installed X-T2 runtime must include `XAPI.dll`, `XSDK.DAT`, the transport DLLs, and `FF0002API.dll` beside the plugin assembly. Diagnostics now report this inventory explicitly. X-T2 firmware 1.10 introduced USB tethering; use current firmware where practical and select `USB AUTO` / `USB TETHER SHOOTING AUTO` before connecting.
 
@@ -114,10 +142,11 @@ Configure your camera with the following settings for proper plugin operation:
 | :--- | :--- | :--- |
 | **Connection Mode** | `USB TETHER SHOOTING AUTO` or `PC SHOOT AUTO` | Enables USB control |
 | **Image Quality** | `RAW` or `RAW+JPEG` | The plugin downloads RAF data and discards JPEG frames |
+| **Exposure Mode** | `M` (Manual) | **Important.** In Aperture or Shutter Priority the camera keeps control of exposure and offers the plugin only a single shutter speed with no bulb, which caps your maximum exposure |
 | **Drive Dial** | `S` (Single Shot) | Prevents burst capture conflicts |
 | **Shutter Dial** | `T` (Time) or `A` (Auto) | Allows software shutter control |
 | **ISO Dial** | `A` (Auto) or `C` (Command) | Allows software ISO control |
-| **Focus Mode** | `S` or `C` for lens focuser; `M` for manual/telescope | The plugin switches the body to manual focus while the focuser is connected so it cannot refocus on its own, and restores your setting on disconnect |
+| **Focus Mode** | Either; the plugin handles it | It switches the body to manual focus while the focuser is connected, so it cannot refocus on its own, and restores your setting on disconnect. The lens' own focus capability is only readable in manual focus mode, which is why this happens before anything else |
 
 ### N.I.N.A. Settings
 
@@ -144,9 +173,14 @@ Access plugin settings through **Options > Plugins > Fujifilm Native Camera**.
 | **Turn off Long Exposure NR** | Stops the camera shooting and subtracting its own dark after every long sub | Enabled |
 | **Sensor crop** | Crop mode to request; smaller frames download faster | Leave alone |
 | **Focus distance unit** | Unit used when reporting lens focus limiter ranges | Metres |
-| **Force manual focus mode** | Stops the body refocusing on its own while the focuser is connected | Enabled |
+| **Force manual focus mode while connected** | Stops the body refocusing on its own between exposures | Enabled |
 | **Demosaic Quality** | Preview processing quality (Fast/Balanced/High Quality) | Fast |
-| **Live View Quality / Size** | Controls SDK live-view stream quality and dimensions | Normal / Large |
+| **Live View Quality** | Fine or Basic. Not every body accepts every value; a rejected one falls back to Fine | Fine |
+| **Live View Image quality / size** | Relative stream size (Large/Medium/Small) | Large |
+
+RAW bit depth is only offered by some bodies; where it is not, the camera's own setting is left
+alone. The same applies to compression, Long Exposure NR and crop mode - the plugin asks the camera
+what it supports rather than assuming from the model.
 
 Settings are written to disk when you press **Save** and also when you navigate away from the
 options page. **Export Diagnostics** writes a JSON report and shows you the file path; plugin
@@ -170,24 +204,37 @@ The plugin adds these to N.I.N.A.'s advanced sequencer under the **Fujifilm** ca
 
 | Issue | Cause | Solution |
 | :--- | :--- | :--- |
-| **Camera Busy / Exposure Fail** | Camera writing to SD card | Leave **Stop the camera writing to its memory card** enabled, or increase the image download delay in N.I.N.A. options |
-| **Focuser position differs every reconnect** | Body refocusing on its own, or a lens parked past infinity | Update to 3.0.4.0 or later and leave **Force manual focus mode** enabled |
-| **Exposure Error 0x2003** | Invalid dial combination | Set Shutter and ISO dials to `T`/`A` or `C` to allow software control |
+| **Maximum exposure is only 60 seconds** | A regression in 3.0.2.0 through 3.0.3.0: the SDK reports "no bulb support" on essentially every body, and the plugin believed it | Fixed in 3.1.0.0. The maximum returns to 60 minutes |
+| **Every long sub takes twice as long** | The camera's Long Exposure NR is on, so it shoots and subtracts its own dark after each frame | Leave **Turn off the camera's Long Exposure NR** enabled. The plugin also warns when it finds it on |
+| **Camera Busy / Exposure Fail** | Camera writing to its memory card | Leave **Stop the camera writing to its memory card** enabled, or increase the image download delay in N.I.N.A. options |
+| **Focuser position differs every reconnect, or is negative** | The body refocusing on its own, or a lens parked past infinity being clamped | Fixed in 3.1.0.0. Leave **Force manual focus mode while connected** enabled |
+| **Autofocus fails near the bottom of the range** | Infinity used to sit at position 0 with no travel beneath it | Fixed in 3.1.0.0. The focuser description now shows where infinity sits and how much past-infinity travel exists; size your autofocus steps to fit |
+| **Focus moves time out even though the lens moved** | Some lenses report a position offset from the one they were commanded | Fixed in 3.1.0.0; a move now completes when the lens stops moving, and the offset is logged |
+| **Autofocus cannot reach the stars** | The lens focus limiter is set to a range that excludes infinity | Set the limiter switch to its full range. The plugin reports the limiter ranges and says explicitly when one excludes infinity |
+| **Exposure Error 0x2003** | Invalid dial combination | Set the mode to Manual, and the Shutter and ISO dials to `T`/`A` or `C`, so the plugin can control them. In Aperture Priority the camera only offers one shutter speed and no bulb |
 | **Black & White Preview** | Debayering disabled | Enable **Debayer Image** in N.I.N.A. imaging options |
-| **Focus Timeout** | Lens in manual focus mode | Ensure lens focus switch is set to `S` or `C` (not pulled back to MF on clutch-type lenses) |
-| **Lens Not Detected** | Manual focus lens or adapter | Only electronic AF lenses are supported for focuser control |
+| **Live view looks stretched or poor** | Fixed in 3.1.0.0: the frame size was estimated wrongly, and the default quality was one some bodies reject | Update to 3.1.0.0; nothing needs configuring |
+| **Lens Not Detected** | Manual focus lens or adapter | Only electronic lenses report a programmable focus range |
 | **X-T2 Not Detected** | Missing legacy model module, camera mode, cable, or another tethering process | Verify `FF0002API.dll` is present; select `USB TETHER SHOOTING AUTO`; close X Acquire/other tethering software; reconnect and export diagnostics |
-| **Battery Unavailable** | Model-specific battery call is not verified | This is intentional on X-T2 and unknown models; use the camera display |
+| **Battery Unavailable** | The camera did not accept any known battery query layout | Use the camera display. The plugin probes rather than relying on a model list, so this is rare |
 
 ---
 
 ## Limitations
 
-- **Experimental Live View**: Streaming exists, but frame rate and image quality are limited by the current implementation and camera/SDK behavior
-- **No Binning**: Only full-frame capture is supported
-- **RAW Only**: Plugin captures RAW images; JPEG capture is not supported
-- **One Active Camera**: The SDK runtime and plugin session are process-global
-- **Legacy X-T2 Path**: The module exists and exposes the needed APIs, but support remains experimental until tested on physical hardware
+- **Live view is a preview, not an imaging path.** Measured on a GFX100S II at the Large setting:
+  1024x768 at 15-18 fps, roughly 200-230 KB per frame on Fine and 46-52 KB on Basic. Dimensions
+  differ by model and sensor aspect ratio
+- **No sensor temperature.** Astro software usually writes `CCD-TEMP` from the camera; the Fujifilm
+  SDK exposes a temperature reading only in its movie-mode API, so there is nothing to report for
+  stills. This will not be added unless Fujifilm exposes it
+- **No binning**: only full-frame capture is supported
+- **RAW only**: JPEG capture is not supported
+- **One active camera**: the SDK runtime and plugin session are process-global
+- **No pixel-shift multi-shot.** The SDK supports it, but it needs a different capture sequence and
+  multi-frame handling, and has not been implemented
+- **Legacy X-T2 path**: the module exists and exposes the needed APIs, but support remains
+  experimental until tested on physical hardware
 
 ---
 
@@ -211,13 +258,38 @@ The plugin adds these to N.I.N.A.'s advanced sequencer under the **Fujifilm** ca
 
 ### Tests
 
-The deterministic logic is covered by a platform-neutral xUnit project, so it can run without N.I.N.A., WPF, a Fujifilm SDK installation, or camera hardware:
+The deterministic logic is covered by a platform-neutral xUnit project, so it runs without N.I.N.A.,
+WPF, a Fujifilm SDK installation, or camera hardware:
 
 ```powershell
 dotnet test tests/NINA.Plugins.Fujifilm.Tests/NINA.Plugins.Fujifilm.Tests.csproj -c Release
 ```
 
-The suite covers model matching and all shipped configurations, safe X-T2/GFX100RF battery handling, shutter selection, settings normalization, shared-session ownership, metadata typing, active-area crop validation, and X-Trans-to-RGGB conversion. Native SDK behavior still requires the hardware smoke tests described in the X-T2 status section.
+It covers model matching and every shipped configuration, focus travel mapping and move settling,
+focus limiter interpretation, shutter selection and the bulb ceiling, sensitivity filtering, battery
+layout discovery, live view zoom mapping, capability gating, settings normalisation, shared-session
+ownership, metadata typing, active-area crop validation and X-Trans-to-RGGB conversion.
+
+### Verifying the SDK interop layer
+
+`build/verify-sdk-interop.py` checks the interop surface against the real SDK: every `DllImport`
+entry point against `XAPI.dll`'s export table, and every constant, API code and API parameter against
+the SDK headers. It has caught shipped defects that reading the code did not - an entry point that
+does not exist in the DLL at all, among them. It needs the licensed SDK, so CI cannot run it:
+
+```powershell
+python3 build/verify-sdk-interop.py --sdk-dll path\to\XAPI.dll --headers path\to\SDK\HEADERS
+```
+
+### Testing against a real camera
+
+`tools/hardware-probe` drives a connected camera through the whole feature set. It compiles the
+plugin's own decision-making classes and feeds them live camera data, so the shipping logic is what
+gets exercised rather than a reimplementation, and it applies every setting across every value the
+camera advertises before restoring each one. See its README for how to run it.
+
+Because the SDK ships a Linux build, the probe can drive a camera from a Linux workstation even
+though the plugin itself is Windows-only.
 
 ---
 
