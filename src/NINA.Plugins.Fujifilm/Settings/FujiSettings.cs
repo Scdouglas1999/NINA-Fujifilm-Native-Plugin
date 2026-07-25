@@ -72,6 +72,15 @@ public sealed class FujiSettings
     /// </summary>
     public bool ForceManualFocusMode { get; set; } = true;
 
+    /// <summary>
+    /// Ask the camera to stop writing captures to its own memory card while N.I.N.A. is connected.
+    /// The plugin always intended to do this - a card write competes with the USB download and can
+    /// stall a sequence - but it sent an invalid value that the SDK rejected, so card recording
+    /// stayed on. Now that the value is correct, this is a setting: turn it off to keep an in-camera
+    /// backup copy of every frame.
+    /// </summary>
+    public bool DisableCameraCardRecording { get; set; } = true;
+
     public void Normalize()
     {
         BulbReleaseDelayMs = Math.Clamp(BulbReleaseDelayMs, 0, 5000);

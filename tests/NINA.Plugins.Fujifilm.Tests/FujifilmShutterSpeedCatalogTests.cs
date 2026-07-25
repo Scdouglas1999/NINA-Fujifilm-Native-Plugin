@@ -57,4 +57,61 @@ public sealed class FujifilmShutterSpeedCatalogTests
         Assert.Throws<InvalidOperationException>(() =>
             FujifilmShutterSpeedCatalog.SelectCode(new Dictionary<int, double>(), 1, false));
     }
+
+    // XSDK_SHUTTER_* codes are the exposure time in microseconds (XAPI.h: 1/8000" = 122,
+    // 1" = 1000000, 30" = 32000000), with a separate T-mode series for 2-60 minutes.
+    // The catalog previously stopped at 60", so every longer code the camera advertised was
+    // rejected as undocumented and the exposure was forced onto the bulb path.
+    [Theory]
+    [InlineData(35000000, 35.0)]
+    [InlineData(60000000, 60.0)]
+    [InlineData(256000000, 250.0)]
+    [InlineData(2048000000, 2000.0)]
+    [InlineData(64000030, 120.0)]    // XSDK_SHUTTER_2M
+    [InlineData(64000060, 240.0)]    // XSDK_SHUTTER_4M
+    [InlineData(64000090, 480.0)]    // XSDK_SHUTTER_8M
+    [InlineData(64000120, 900.0)]    // XSDK_SHUTTER_15M
+    [InlineData(64000150, 1800.0)]   // XSDK_SHUTTER_30M
+    [InlineData(64000180, 3600.0)]   // XSDK_SHUTTER_60M
+    public void Build_ResolvesLongExposureCodes(int sdkCode, double expectedSeconds)
+    {
+        var unknown = new List<int>();
+
+        var result = FujifilmShutterSpeedCatalog.Build(
+            new[] { sdkCode },
+            Array.Empty<ShutterSpeedMapping>(),
+            bulbCapable: false,
+            bulbMaxSeconds: 0,
+            unknown.Add);
+
+        Assert.Empty(unknown);
+        Assert.Equal(expectedSeconds, result[sdkCode], 6);
+    }
+
+    [Fact]
+    public void GetTimedMaximum_ReachesOneHourWhenBodyAdvertisesTMode()
+    {
+        var map = FujifilmShutterSpeedCatalog.Build(
+            new[] { 1000000, 32000000, 64000000, 64000120, 64000180 },
+            Array.Empty<ShutterSpeedMapping>(),
+            bulbCapable: false,
+            bulbMaxSeconds: 0);
+
+        Assert.Equal(3600.0, FujifilmShutterSpeedCatalog.GetTimedMaximum(map, fallback: 0), 6);
+    }
+
+    [Fact]
+    public void SelectCode_PrefersNativeTimedCodeOverBulbForLongSubExposures()
+    {
+        // A 300s sub-exposure is the common astrophotography case. With the long codes present the
+        // catalog can pick a timed code instead of falling through to bulb.
+        var map = FujifilmShutterSpeedCatalog.Build(
+            new[] { 32000000, 64000000, 64000060, 64000090 },
+            Array.Empty<ShutterSpeedMapping>(),
+            bulbCapable: true,
+            bulbMaxSeconds: 3600);
+
+        Assert.Equal(64000090, FujifilmShutterSpeedCatalog.SelectCode(map, 480.0, bulbCapable: true));
+    }
 }
+

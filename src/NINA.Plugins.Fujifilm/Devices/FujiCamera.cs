@@ -273,10 +273,18 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
             }
 
             var error = FujifilmSdkWrapper.GetLastError(_session.Handle);
-            if (error.ErrorCode == FujifilmSdkWrapper.XSDK_ERRCODE_BUSY && retryCount < maxRetries)
+
+            // The SDK documents three recoverable busy states. FORCEMODE_BUSY and
+            // RUNNING_OTHER_FUNCTION are both described as transient conditions that clear once the
+            // camera finishes what it is doing, so they are worth the same retry as plain BUSY.
+            var isBusy = error.ErrorCode is FujifilmSdkWrapper.XSDK_ERRCODE_BUSY
+                or FujifilmSdkWrapper.XSDK_ERRCODE_FORCEMODE_BUSY
+                or FujifilmSdkWrapper.XSDK_ERRCODE_RUNNING_OTHER_FUNCTION;
+
+            if (isBusy && retryCount < maxRetries)
             {
                 retryCount++;
-                _diagnostics.RecordEvent("Camera", $"{operationName} failed with BUSY. Retrying ({retryCount}/{maxRetries}) in {delayMs}ms...");
+                _diagnostics.RecordEvent("Camera", $"{operationName} failed with BUSY (0x{error.ErrorCode:X}). Retrying ({retryCount}/{maxRetries}) in {delayMs}ms...");
                 await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
             }
             else
@@ -423,10 +431,16 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
         // Explicitly setting AE Mode caused COMBINATION errors in previous attempts.
         _diagnostics.RecordEvent("Camera", "Skipping programmatic AE mode setting (relying on physical camera state).");
 
-        _diagnostics.RecordEvent("Camera", "Setting Media Record Mode to OFF (0) to prevent SD card conflicts...");
+        if (!_settingsProvider.Settings.DisableCameraCardRecording)
+        {
+            _diagnostics.RecordEvent("Camera", "Leaving camera card recording enabled (DisableCameraCardRecording is off).");
+            return;
+        }
+
+        _diagnostics.RecordEvent("Camera", $"Setting Media Record Mode to OFF (0x{FujifilmSdkWrapper.XSDK_MEDIAREC_OFF:X}) to prevent SD card conflicts...");
         try
         {
-            await ExecuteWithRetryAsync(() => 
+            await ExecuteWithRetryAsync(() =>
                 FujifilmSdkWrapper.XSDK_SetMediaRecord(_session.Handle, FujifilmSdkWrapper.XSDK_MEDIAREC_OFF),
                 nameof(FujifilmSdkWrapper.XSDK_SetMediaRecord),
                 cancellationToken).ConfigureAwait(false);
@@ -673,8 +687,14 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
             FujifilmSdkWrapper.SDK_POWERCAPACITY_80 => 80,
             FujifilmSdkWrapper.SDK_POWERCAPACITY_100 => 100,
             FujifilmSdkWrapper.SDK_POWERCAPACITY_DC_CHARGE => 100, // Charging
+            FujifilmSdkWrapper.SDK_POWERCAPACITY_FULL_CHARGE => 100,
             FujifilmSdkWrapper.SDK_POWERCAPACITY_DC => 100,        // DC powered
-            _ => statusCode >= 0 && statusCode <= 100 ? statusCode : 0
+
+            // Not battery levels: report unknown rather than letting the numeric fallback below
+            // turn status code 0x0F into "15%".
+            FujifilmSdkWrapper.SDK_POWERCAPACITY_CHARGING_ERROR => -1,
+            FujifilmSdkWrapper.SDK_POWERCAPACITY_CAPACITY_UNKNOWN => -1,
+            _ => -1
         };
     }
 
@@ -836,15 +856,13 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
             return Array.Empty<int>();
         }
 
-        // Use DR=100 explicitly (should have been set during connection, but use explicit value for safety)
-        // CapSensitivity requires DR to be set, and we set it to 100 during ConnectAsync
-        int drToQuery = 100; // XSDK_DRANGE_100
-        
+        // XSDK_CapSensitivity reports the sensitivities available for the dynamic range currently set
+        // on the camera; it takes no dynamic-range argument. DR is set to 100 during ConnectAsync.
         int count = 0;
         try
         {
             // Step 1: Get count
-            var countResult = FujifilmSdkWrapper.XSDK_CapSensitivity(_session.Handle, ref drToQuery, ref count, IntPtr.Zero);
+            var countResult = FujifilmSdkWrapper.XSDK_CapSensitivity(_session.Handle, ref count, IntPtr.Zero);
             
             if (countResult != FujifilmSdkWrapper.XSDK_COMPLETE || count <= 0)
             {
@@ -857,7 +875,7 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
             var buffer = Marshal.AllocHGlobal(bufferSize);
             try
             {
-                var dataResult = FujifilmSdkWrapper.XSDK_CapSensitivity(_session.Handle, ref drToQuery, ref count, buffer);
+                var dataResult = FujifilmSdkWrapper.XSDK_CapSensitivity(_session.Handle, ref count, buffer);
                 
                 if (dataResult != FujifilmSdkWrapper.XSDK_COMPLETE)
                 {
@@ -1250,9 +1268,12 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
 
             if (info.lDataSize > 0)
             {
-                if (info.lFormat != FujifilmSdkWrapper.XSDK_IMAGEFORMAT_RAW)
+                // Only the low byte of lFormat is the image format; bits 0x0F00 carry the camera's
+                // rotation (RAW_90 = 0x0601, RAW_180 = 0x0301, RAW_270 = 0x0801). Comparing the raw
+                // value discarded and deleted any frame captured with the body rotated.
+                if ((info.lFormat & 0xFF) != FujifilmSdkWrapper.XSDK_IMAGEFORMAT_RAW)
                 {
-                    _diagnostics.RecordEvent("Camera", $"Discarding non-RAW image from camera (format={info.lFormat}, bytes={info.lDataSize}). Set IMAGE QUALITY to RAW or RAW+JPEG.");
+                    _diagnostics.RecordEvent("Camera", $"Discarding non-RAW image from camera (format=0x{info.lFormat:X}, bytes={info.lDataSize}). Set IMAGE QUALITY to RAW or RAW+JPEG.");
                     var deleteNonRawResult = FujifilmSdkWrapper.XSDK_DeleteImage(_session.Handle);
                     if (deleteNonRawResult != FujifilmSdkWrapper.XSDK_COMPLETE)
                     {

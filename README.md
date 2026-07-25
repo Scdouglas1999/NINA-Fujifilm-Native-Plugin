@@ -117,7 +117,7 @@ Configure your camera with the following settings for proper plugin operation:
 | **Drive Dial** | `S` (Single Shot) | Prevents burst capture conflicts |
 | **Shutter Dial** | `T` (Time) or `A` (Auto) | Allows software shutter control |
 | **ISO Dial** | `A` (Auto) or `C` (Command) | Allows software ISO control |
-| **Focus Mode** | `S` or `C` for lens focuser; `M` for manual/telescope | Determines focus control method |
+| **Focus Mode** | `S` or `C` for lens focuser; `M` for manual/telescope | The plugin switches the body to manual focus while the focuser is connected so it cannot refocus on its own, and restores your setting on disconnect |
 
 ### N.I.N.A. Settings
 
@@ -131,15 +131,21 @@ For X-Trans cameras to display color preview:
 
 ## Plugin Settings
 
-Access plugin settings through **Options > Equipment > Camera > Fujifilm**.
+Access plugin settings through **Options > Plugins > Fujifilm Native Camera**.
 
 | Setting | Description | Default |
 | :--- | :--- | :--- |
-| **Bulb Release Delay** | Delay in milliseconds for bulb mode releases | 500ms |
+| **Bulb Release Delay** | Delay in milliseconds for bulb mode releases (0-5000) | 500ms |
 | **Save Native RAF Sidecar** | Saves original RAF file alongside processed images | Enabled |
 | **Extended FITS Metadata** | Adds Fujifilm metadata to FITS headers | Enabled |
+| **Stop camera writing to its memory card** | Prevents card writes competing with the USB download | Enabled |
+| **Force manual focus mode** | Stops the body refocusing on its own while the focuser is connected | Enabled |
 | **Demosaic Quality** | Preview processing quality (Fast/Balanced/High Quality) | Fast |
 | **Live View Quality / Size** | Controls SDK live-view stream quality and dimensions | Normal / Large |
+
+Settings are written to disk when you press **Save** and also when you navigate away from the
+options page. **Export Diagnostics** writes a JSON report and shows you the file path; plugin
+events are also mirrored into N.I.N.A.'s own log.
 
 ---
 
@@ -147,7 +153,8 @@ Access plugin settings through **Options > Equipment > Camera > Fujifilm**.
 
 | Issue | Cause | Solution |
 | :--- | :--- | :--- |
-| **Camera Busy / Exposure Fail** | Camera writing to SD card | Increase image download delay in N.I.N.A. options, or disable SD card recording in camera settings |
+| **Camera Busy / Exposure Fail** | Camera writing to SD card | Leave **Stop the camera writing to its memory card** enabled, or increase the image download delay in N.I.N.A. options |
+| **Focuser position differs every reconnect** | Body refocusing on its own, or a lens parked past infinity | Update to 3.0.4.0 or later and leave **Force manual focus mode** enabled |
 | **Exposure Error 0x2003** | Invalid dial combination | Set Shutter and ISO dials to `T`/`A` or `C` to allow software control |
 | **Black & White Preview** | Debayering disabled | Enable **Debayer Image** in N.I.N.A. imaging options |
 | **Focus Timeout** | Lens in manual focus mode | Ensure lens focus switch is set to `S` or `C` (not pulled back to MF on clutch-type lenses) |

@@ -36,6 +36,13 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private string _capabilitiesErrorMessage = string.Empty;
 
+    /// <summary>
+    /// Where the last diagnostics export was written. Shown in the UI so a user can actually find
+    /// the file to attach to a bug report; previously the path was returned and thrown away.
+    /// </summary>
+    [ObservableProperty]
+    private string _diagnosticsExportPath = string.Empty;
+
     [ImportingConstructor]
     public SettingsViewModel(IFujiSettingsProvider settingsProvider, IFujifilmDiagnosticsService diagnostics, IFujiCameraFactory cameraFactory)
     {
@@ -208,7 +215,34 @@ public partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private async Task ExportDiagnosticsAsync()
     {
-        await _diagnostics.ExportDiagnosticsAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            var path = await _diagnostics.ExportDiagnosticsAsync(CancellationToken.None).ConfigureAwait(false);
+            DiagnosticsExportPath = string.IsNullOrWhiteSpace(path)
+                ? "Diagnostics export did not return a file path."
+                : path;
+        }
+        catch (Exception ex)
+        {
+            DiagnosticsExportPath = $"Diagnostics export failed: {ex.Message}";
+            _diagnostics.RecordEvent("Settings", $"Diagnostics export failed: {ex}");
+        }
+    }
+
+    /// <summary>
+    /// Persists settings. The view calls this when it unloads so that a change made without
+    /// pressing Save is not silently lost on the next launch.
+    /// </summary>
+    public void SaveSettings()
+    {
+        try
+        {
+            _settingsProvider.Save();
+        }
+        catch (Exception ex)
+        {
+            _diagnostics.RecordEvent("Settings", $"Saving settings failed: {ex.Message}");
+        }
     }
 
     [RelayCommand]

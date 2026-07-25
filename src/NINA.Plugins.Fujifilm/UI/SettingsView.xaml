@@ -117,13 +117,28 @@
                     <LineBreak />
                     Files are saved to your NINA image directory.
                 </TextBlock>
-                <StackPanel Orientation="Horizontal">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
                     <CheckBox IsChecked="{Binding Settings.EnableExtendedFitsMetadata, Mode=TwoWay}"
                               VerticalAlignment="Center"
                               Margin="0,0,8,0" />
                     <TextBlock Text="Annotate FITS headers with Fuji metadata"
                                VerticalAlignment="Center" />
                 </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                    <CheckBox IsChecked="{Binding Settings.DisableCameraCardRecording, Mode=TwoWay}"
+                              VerticalAlignment="Center"
+                              Margin="0,0,8,0" />
+                    <TextBlock Text="Stop the camera writing to its memory card"
+                               VerticalAlignment="Center"
+                               FontWeight="SemiBold" />
+                </StackPanel>
+                <TextBlock TextWrapping="Wrap"
+                           Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                           FontSize="11"
+                           Margin="24,0,0,0">
+                    A card write competes with the USB download and can stall a sequence.
+                    Turn this off to keep an in-camera backup copy of every frame.
+                </TextBlock>
             </StackPanel>
 
             <!-- Focuser Settings -->
@@ -225,7 +240,7 @@
                     <Button Content="Refresh Cameras" 
                             Width="140" 
                             HorizontalAlignment="Left"
-                            Command="{Binding RefreshCamerasAsyncCommand}" 
+                            Command="{Binding RefreshCamerasCommand}" 
                             Margin="0,0,0,8" />
                     
                     <ListBox ItemsSource="{Binding AvailableCameras}" 
@@ -237,7 +252,7 @@
                     <Button Content="Load Capabilities" 
                             Width="140" 
                             HorizontalAlignment="Left"
-                            Command="{Binding LoadCapabilitiesAsyncCommand}" 
+                            Command="{Binding LoadCapabilitiesCommand}" 
                             Margin="0,0,0,12" />
                     
                     <TextBlock Text="Capabilities" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,8" />
@@ -265,11 +280,26 @@
                         Height="32"
                         Command="{Binding SaveCommand}" 
                         Margin="0,0,8,0" />
-                <Button Content="Export Diagnostics" 
-                        Width="140" 
+                <Button Content="Export Diagnostics"
+                        Width="140"
                         Height="32"
-                        Command="{Binding ExportDiagnosticsAsyncCommand}" />
+                        Command="{Binding ExportDiagnosticsCommand}" />
             </StackPanel>
+            <TextBlock Text="{Binding DiagnosticsExportPath}"
+                       TextWrapping="Wrap"
+                       FontSize="11"
+                       Margin="0,8,0,0"
+                       Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding DiagnosticsExportPath}" Value="">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
         </StackPanel>
     </ScrollViewer>
 </UserControl>

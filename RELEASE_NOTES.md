@@ -1,3 +1,61 @@
+# 3.0.4.0
+
+Every change below was found by auditing the plugin against the Fujifilm SDK headers and the
+official Programming Reference, and each one is backed either by a header the code contradicts or by
+a failure visible in real device logs.
+
+## Exposure
+
+- **Sub-exposures longer than 60 seconds can now use the camera's own timed shutter.** The shutter
+  catalog stopped at 60 seconds, so every longer code the body advertised — including the whole
+  T-mode series from 2 to 60 minutes — was rejected as undocumented and the exposure was pushed onto
+  the bulb path. 37 missing codes were added from `XAPI.h`, covering 35s-2000s and 2-60 minutes.
+- **Frames are no longer destroyed when the camera reports a rotation.** Only the low byte of
+  `lFormat` is the image format; bits `0x0F00` carry the orientation, so a RAW shot with the body
+  rotated arrives as `0x0601`/`0x0301`/`0x0801`. The code compared the whole value against `1`,
+  concluded the frame was not RAW, deleted it, and polled until the exposure timed out.
+- **The ISO capability query works.** `XSDK_CapSensitivity` was declared with four parameters where
+  the SDK takes three, shifting every argument by one slot. The call reported success and returned
+  zero values on every session, so the plugin always fell back to a hardcoded ISO list.
+- **Removed a shutter-speed table for the GFX100S that used the wrong encoding.** SDK shutter codes
+  are microseconds; that table treated them as `1/x` denominators, so SDK code `30` (1/32000s) was
+  described as 1/30s. It was inert on the GFX100S but would have produced a badly wrong exposure on
+  any body that reports those codes.
+
+## Stability
+
+- **Fixed an 8-byte heap overrun on every image download and live-view frame.**
+  `XSDK_ImageInformation` is missing the trailing `hImage` handle that `XAPI.h` declares, so the
+  marshaller allocated 56 bytes for a structure the SDK writes 64 bytes into. This corrupted memory
+  on a hot path with no crash at the call site.
+- **Corrected nine SDK error-code values.** Among other things `FORCEMODE_BUSY` was defined as the
+  value that actually means `AF_TIMEOUT`. Both of the SDK's documented recoverable busy states are
+  now recognised and retried instead of surfacing as hard failures.
+
+## Camera
+
+- **Card recording can now actually be turned off, and is a setting.** The plugin always intended to
+  stop the camera writing to its own card during a session, but sent value `0`, which the SDK
+  rejected as an invalid combination — so card recording stayed on. The correct value is now sent,
+  and because this changes long-standing behaviour it is exposed as **Stop the camera writing to its
+  memory card** (on by default). Turn it off to keep an in-camera backup of every frame.
+- **A fully charged battery no longer reports 14%.** Three documented status codes were unmapped and
+  fell through to a numeric fallback that treated the raw status code as a percentage.
+- Removed an invented shooting-mode constant and corrected `ModeManual` in the camera configuration
+  files; neither is read at runtime, but both were wrong.
+
+## Settings and diagnostics
+
+- **Three buttons on the settings page did nothing.** `Refresh`, `Load Capabilities` and
+  `Export Diagnostics` were bound to command names that do not exist, so clicking them was silently
+  ignored. Refresh and Load Capabilities were masked by side effects elsewhere; **Export Diagnostics
+  was completely unreachable**, which is the one thing needed to diagnose a problem report.
+- **The diagnostics export now tells you where it wrote the file.** The path was previously returned
+  and discarded.
+- **Settings persist when you navigate away from the options page**, not only when Save is pressed.
+- README corrections: the settings page lives under **Options > Plugins**, and the focus-mode
+  guidance now matches what the plugin does.
+
 # 3.0.3.0
 
 ## Focuser positioning

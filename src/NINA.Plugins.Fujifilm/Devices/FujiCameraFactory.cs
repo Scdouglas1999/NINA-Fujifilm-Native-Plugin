@@ -98,7 +98,7 @@ public sealed class FujiCameraFactory : IFujiCameraFactory
             descriptor.DisplayName,  // Camera name
             descriptor.DisplayName,  // Camera ID/description
             "Fujifilm Camera Plugin",
-            "3.0.3",
+            "3.0.4",
             true,  // hasBattery = true so NINA shows battery in equipment panel
             sdkAdapter,
             _profileService,

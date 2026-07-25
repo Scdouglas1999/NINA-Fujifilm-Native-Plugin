@@ -23,15 +23,17 @@ internal static class FujifilmSdkWrapper
     public const int XSDK_ERRCODE_LOADLIB = 0x1004;
     public const int XSDK_ERRCODE_UNSUPPORTED = 0x1005;
     public const int XSDK_ERRCODE_BUSY = 0x1006;
-    public const int XSDK_ERRCODE_FORCEMODE_BUSY = 0x1007;
-    public const int XSDK_ERRCODE_AF_TIMEOUT = 0x1008;
-    public const int XSDK_ERRCODE_SHOOT_ERROR = 0x1009;
-    public const int XSDK_ERRCODE_FRAME_FULL = 0x100A;
+    public const int XSDK_ERRCODE_AF_TIMEOUT = 0x1007;
+    public const int XSDK_ERRCODE_SHOOT_ERROR = 0x1008;
+    public const int XSDK_ERRCODE_FRAME_FULL = 0x1009;
     public const int XSDK_ERRCODE_STANDBY = 0x1010;
-    public const int XSDK_ERRCODE_NODRIVER = 0x100C;
-    public const int XSDK_ERRCODE_NO_MODEL_MODULE = 0x100D;
-    public const int XSDK_ERRCODE_API_NOTFOUND = 0x100E;
-    public const int XSDK_ERRCODE_API_MISMATCH = 0x100F;
+    public const int XSDK_ERRCODE_NODRIVER = 0x1011;
+    public const int XSDK_ERRCODE_NO_MODEL_MODULE = 0x1012;
+    public const int XSDK_ERRCODE_API_NOTFOUND = 0x1013;
+    public const int XSDK_ERRCODE_API_MISMATCH = 0x1014;
+    public const int XSDK_ERRCODE_INVALID_USBMODE = 0x1015;
+    public const int XSDK_ERRCODE_FORCEMODE_BUSY = 0x1016;
+    public const int XSDK_ERRCODE_RUNNING_OTHER_FUNCTION = 0x1017;
     public const int XSDK_ERRCODE_COMMUNICATION = 0x2001;
     public const int XSDK_ERRCODE_TIMEOUT = 0x2002;
     public const int XSDK_ERRCODE_COMBINATION = 0x2003;
@@ -41,7 +43,6 @@ internal static class FujifilmSdkWrapper
     public const int XSDK_ERRCODE_INTERNAL = 0x9001;
     public const int XSDK_ERRCODE_MEMFULL = 0x9002;
     public const int XSDK_ERRCODE_UNKNOWN = 0x9100;
-    public const int XSDK_ERRCODE_RUNNING_OTHER_FUNCTION = 0x9101;
 
     public const int XSDK_RELEASE_SHOOT = 0x0100;
     public const int XSDK_RELEASE_N_S1OFF = 0x0004;
@@ -64,13 +65,14 @@ internal static class FujifilmSdkWrapper
     public const int XSDK_DRANGE_800 = 800;
     public const int XSDK_DRANGE_AUTO = 0xffff;
     
-    // Shooting Mode Constants
-    public const int XSDK_MODE_M = 0x1101;  // Manual mode
 
-    // Media Record Constants
-    public const int XSDK_MEDIAREC_OFF = 0;
-    public const int XSDK_MEDIAREC_SD = 1;
-    public const int XSDK_MEDIAREC_RAW = 2;
+    // Media Record Constants (XAPI.h lines 2237-2240). OFF was previously defined as 0, which is not
+    // a valid value: the SDK rejected it with XSDK_ERRCODE_COMBINATION, so card recording was never
+    // actually disabled.
+    public const int XSDK_MEDIAREC_RAWJPEG = 0x0001;
+    public const int XSDK_MEDIAREC_RAW = 0x0002;
+    public const int XSDK_MEDIAREC_JPEG = 0x0003;
+    public const int XSDK_MEDIAREC_OFF = 0x0004;
 
     // ========== Battery Info API (from XAPIOpt.h) ==========
     public const int API_CODE_CheckBatteryInfo = 0x4055;
@@ -99,6 +101,9 @@ internal static class FujifilmSdkWrapper
     public const int SDK_POWERCAPACITY_80 = 0x000B;         // 80%
     public const int SDK_POWERCAPACITY_100 = 0x000C;        // 100%
     public const int SDK_POWERCAPACITY_DC_CHARGE = 0x000D;  // Charging via DC
+    public const int SDK_POWERCAPACITY_FULL_CHARGE = 0x000E;      // Fully charged
+    public const int SDK_POWERCAPACITY_CHARGING_ERROR = 0x000F;   // Charging error
+    public const int SDK_POWERCAPACITY_CAPACITY_UNKNOWN = 0x0010; // Capacity unknown
     public const int SDK_POWERCAPACITY_DC = 0x00FF;         // Powered by DC adapter
 
     // ========== Lens Position/Zoom API Codes (from XAPI.h) ==========
@@ -132,10 +137,13 @@ internal static class FujifilmSdkWrapper
     public const int XSDK_LIVEVIEW_SIZE_S = 0x0003;   // 640px
 
     // ========== Image Format Constants ==========
+    // XAPI.h lines 378-382. Only the low byte of lFormat carries the format; bits 0x0F00 encode
+    // the camera rotation, so always mask with 0xFF before comparing.
     public const int XSDK_IMAGEFORMAT_RAW = 1;
-    public const int XSDK_IMAGEFORMAT_JPEG = 2;
-    public const int XSDK_IMAGEFORMAT_TIFF = 3;
     public const int XSDK_IMAGEFORMAT_LIVE = 4;  // Live View JPEG
+    public const int XSDK_IMAGEFORMAT_NONE = 5;
+    public const int XSDK_IMAGEFORMAT_JPEG = 7;
+    public const int XSDK_IMAGEFORMAT_HEIF = 0x0012;
 
     [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_Init")]
     public static extern int XSDK_Init(IntPtr hLib);
@@ -165,7 +173,10 @@ internal static class FujifilmSdkWrapper
     public static extern int XSDK_SetShutterSpeed(IntPtr hCamera, int lShutterSpeed, int lBulb);
 
     [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_CapSensitivity")]
-    public static extern int XSDK_CapSensitivity(IntPtr hCamera, ref int lDR, ref int plNumSensitivity, IntPtr plSensitivity);
+    // XAPI.H: XSDK_CapSensitivity( XSDK_HANDLE, long* plNumSensitivity, long* plSensitivity ) - three
+    // parameters. The previous four-parameter declaration shifted every argument by one slot, so the
+    // count was written into the caller's dynamic-range variable and the query always returned zero.
+    public static extern int XSDK_CapSensitivity(IntPtr hCamera, ref int plNumSensitivity, IntPtr plSensitivity);
 
     [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_SetSensitivity")]
     public static extern int XSDK_SetSensitivity(IntPtr hCamera, int lSensitivity);
@@ -382,6 +393,11 @@ internal static class FujifilmSdkWrapper
         public int lImagePixWidth;
         public int lImageBitDepth;
         public int lPreviewSize;
+
+        // XAPI.H declares a trailing XSDK_HANDLE hImage. Omitting it made the marshaller allocate
+        // 56 bytes for a struct the SDK writes 64 bytes into, overrunning the buffer on every
+        // XSDK_ReadImageInfo call.
+        public IntPtr hImage;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 4)]
