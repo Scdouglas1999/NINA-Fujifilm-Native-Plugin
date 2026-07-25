@@ -64,6 +64,21 @@ Measured on a GFX100S II, which turned up two reasons the preview could look poo
 For reference, measured at the Large setting: `Fine` delivers 1024x768 at roughly 200-230 KB per
 frame, `Basic` the same resolution at about 46-52 KB, both at 15-18 fps.
 
+## Adapting to the camera rather than recognising it
+
+- **Battery reporting works on any body.** The query layout was chosen from a hardcoded list of
+  model names, which silently disabled battery reporting on any model missing from it - the
+  GFX100RF among them - and needed editing for every camera Fujifilm releases. The plugin now asks
+  the camera, probing the candidate layouts largest first and always supplying storage for the
+  largest, so the variadic call is never handed too few output pointers.
+- **Auto-ISO modes are no longer offered as ISO values.** The sensitivity list returned by the SDK
+  mixes real sensitivities with auto-ISO modes, encoded as non-positive numbers. A camera reported
+  26 entries of which 3 were auto modes; those would have appeared in N.I.N.A. as selectable ISOs,
+  handing exposure control back to the camera mid-sequence. This only became reachable once the
+  capability query started working in 3.0.4.0, which is why it has not been seen before.
+- A model-specific branch whose diagnostic claimed battery reporting was unavailable on one body has
+  been removed, since adaptive probing makes that untrue.
+
 ## Correctness
 
 - **Optional features are gated on what the camera advertises.** The plugin now reads the list of
@@ -109,8 +124,23 @@ itself, not just against the headers:
   even though the same body reports bulb as unsupported, which is exactly why that flag is
   overridden.
 
+- The plugin's own decision-making classes were compiled into a probe and driven with live camera
+  data, so the shipping logic was exercised rather than a parallel reimplementation: 27 checks
+  covering capability gating, model-config resolution, shutter selection across 0.5s to 3600s, the
+  focus travel mapping, focus limiter interpretation, battery layout discovery and the
+  capture-quality plan.
+- Every setting was applied across every value the camera advertises, read back, and restored: RAW
+  bit depth, RAW compression, Long Exposure NR, all four crop modes, focus distance unit, manual
+  focus forcing, card recording, all 23 fixed ISO values, all 67 timed shutter codes, and live view
+  across every quality and size. A value a camera advertises and then refuses is reported and
+  skipped rather than failing the connection, which is what the plugin does at runtime.
+
 Not confirmed on hardware: the rotated-frame mask (the test camera reported no rotation), and the
 sequence instructions running inside N.I.N.A. itself.
+
+Nothing in this release is conditioned on a camera model. Behaviour is derived from what a body
+reports - its advertised API codes and its capability lists - so a model the plugin has never seen
+gets the same treatment as one it has.
 
 # 3.0.4.0
 
