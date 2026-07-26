@@ -75,7 +75,7 @@ public class FujiFocuserSdkAdapter : IFocuser, INotifyPropertyChanged
     }
 
     public string DriverInfo => "Fujifilm Native Driver";
-    public string DriverVersion => "3.1.0";
+    public string DriverVersion => "3.1.1";
     public int InterfaceVersion => 1;
 
     public bool Absolute => true;
@@ -109,7 +109,11 @@ public class FujiFocuserSdkAdapter : IFocuser, INotifyPropertyChanged
         }
     }
     
-    public double StepSize => 1.0;
+    /// <summary>
+    /// Smallest movement the lens will make. Reported so N.I.N.A. knows the real granularity;
+    /// requests are not snapped to it, because that would make most positions unreachable.
+    /// </summary>
+    public double StepSize => _focuser.StepSize;
     public bool TempComp { get => false; set { } }
     public bool TempCompAvailable => false;
     public double Temperature => 0;
@@ -174,9 +178,7 @@ public class FujiFocuserSdkAdapter : IFocuser, INotifyPropertyChanged
         try
         {
             var effectiveTimeout = timeout > 0 ? TimeSpan.FromMilliseconds(timeout) : TimeSpan.FromSeconds(30);
-            await _focuser.MoveAsync(position, token, effectiveTimeout).ConfigureAwait(false);
-            var newPos = await _focuser.GetPositionAsync(token).ConfigureAwait(false);
-            Position = newPos;
+            Position = await _focuser.MoveAsync(position, token, effectiveTimeout).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

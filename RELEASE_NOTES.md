@@ -1,3 +1,30 @@
+# 3.1.1.0
+
+## Focuser positions that could not be reached
+
+**Reported from the field on a GF 500mm: asking the focuser to move to certain positions left
+N.I.N.A. stuck showing "moving" while reporting a neighbouring position, and the move had to be
+cancelled by hand.** Commanding 584 reported 585; commanding 400 reported 399; commanding 585 or 399
+worked fine.
+
+The cause was rounding, exactly as the reporter suspected. Focus requests were being snapped to a
+multiple of the lens' minimum drive step. That lens reports a step of 3, so only one position in
+three could ever be reported back - two thirds of a 27,033-step range did not exist, and N.I.N.A.
+waited indefinitely for a position the driver could never produce.
+
+The minimum drive step describes the smallest movement a lens will make, not a grid that requests
+have to sit on. `XSDK_SetFocusPos` accepts any value in range, so requests are no longer snapped and
+every position is reachable. The step is still reported to N.I.N.A. as the focuser's step size, so
+it knows the real granularity.
+
+Separately, the focuser now reports the position it was asked for once a move settles, rather than
+the raw value read back from the lens. Lenses do not necessarily come to rest on exactly the pulse
+they were given - one tested lens sits about 30 pulses away, another one pulse - and N.I.N.A. waits
+for the focuser to report the position it requested. The difference is logged, so a lens that
+genuinely fails to move is still visible.
+
+Verified on hardware: all 8,772 positions on a lens with a drive step of 3 now round-trip unchanged.
+
 # 3.1.0.0
 
 Feature release. Every SDK value here was verified twice: once against the Fujifilm SDK headers by

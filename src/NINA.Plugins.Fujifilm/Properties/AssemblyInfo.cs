@@ -19,7 +19,7 @@ using System.Runtime.Versioning;
 [assembly: AssemblyMetadata("TargetApplication", "N.I.N.A.")]
 [assembly: AssemblyMetadata("MinimumApplicationVersion", "3.2.0.9001")]
 
-[assembly: AssemblyVersion("3.1.0.0")]
-[assembly: AssemblyFileVersion("3.1.0.0")]
+[assembly: AssemblyVersion("3.1.1.0")]
+[assembly: AssemblyFileVersion("3.1.1.0")]
 [assembly: InternalsVisibleTo("NINA.Plugins.Fujifilm.Tests")]
 [assembly: SupportedOSPlatform("windows")]

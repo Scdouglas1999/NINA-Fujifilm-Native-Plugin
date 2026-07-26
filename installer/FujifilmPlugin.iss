@@ -7,7 +7,7 @@
 ;   ISCC.exe installer\FujifilmPlugin.iss
 
 #ifndef MyAppVersion
-#define MyAppVersion "3.1.0.0"
+#define MyAppVersion "3.1.1.0"
 #endif
 
 #define MyAppName "Fujifilm Native Camera Plugin for N.I.N.A."

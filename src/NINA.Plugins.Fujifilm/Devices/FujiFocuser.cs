@@ -43,6 +43,9 @@ public sealed class FujiFocuser : IAsyncDisposable
     /// <summary>Usable travel available on the past-infinity side of the infinity mark.</summary>
     public int OverSearchInfinity => _travel?.OverSearchInfinity ?? 0;
 
+    /// <summary>Smallest movement the lens will make, from lMinDriveStepMFDriveEndThresh.</summary>
+    public double StepSize => _travel?.Step ?? 1;
+
     public string LensProductName => _lensProductName;
 
     /// <summary>Focus limiter state reported by the lens, when it has one.</summary>
@@ -62,7 +65,18 @@ public sealed class FujiFocuser : IAsyncDisposable
         _descriptor = descriptor;
     }
 
-    public async Task MoveAsync(int position, CancellationToken cancellationToken, TimeSpan? timeout = null)
+    /// <summary>
+    /// Moves the lens and returns the position the focuser is now at, in NINA coordinates.
+    /// </summary>
+    /// <remarks>
+    /// The returned value is the requested position after clamping, not the raw readback. A lens
+    /// does not necessarily come to rest on exactly the pulse it was given - one reports a fixed
+    /// offset of about 30 pulses, another lands a pulse away - and N.I.N.A. waits for the focuser to
+    /// report the position it asked for. Reporting the readback instead leaves that wait
+    /// unsatisfied, so the move appears to hang and has to be cancelled by hand. The residual is
+    /// logged so a lens that genuinely fails to move is still visible.
+    /// </remarks>
+    public async Task<int> MoveAsync(int position, CancellationToken cancellationToken, TimeSpan? timeout = null)
     {
         var session = await EnsureSessionAsync(cancellationToken).ConfigureAwait(false);
         var travel = Travel;
@@ -108,13 +122,13 @@ public sealed class FujiFocuser : IAsyncDisposable
             {
                 case FocusSettleResult.Arrived:
                     _diagnostics.RecordEvent("Focuser", $"Focus move complete: requested={absolute}, actual={actualPos}");
-                    return;
+                    return travel.ToPosition(absolute);
 
                 case FocusSettleResult.Settled:
                     _diagnostics.RecordEvent("Focuser",
                         $"Focus move settled: requested={absolute}, actual={actualPos} (offset {tracker.Residual} pulses). " +
                         "The lens reports its position on a slightly different scale from the one it accepts; this is expected.");
-                    return;
+                    return travel.ToPosition(absolute);
             }
 
             if (DateTime.UtcNow >= deadline)

@@ -103,9 +103,19 @@ public sealed class FocusTravelMap
     public int ToPosition(int pulse) => ToPosition(pulse, out _);
 
     /// <summary>
-    /// Converts a NINA position into an SDK pulse value, clamping to the hard stops and rounding
-    /// to the lens' minimum drive step.
+    /// Converts a NINA position into an SDK pulse value, clamping to the hard stops.
     /// </summary>
+    /// <remarks>
+    /// Deliberately not rounded to <see cref="Step"/>. Snapping requests to a multiple of the
+    /// minimum drive step makes every other position unreachable: on a lens reporting a step of 3,
+    /// two thirds of the range simply did not exist, and asking for one of them moved the lens to a
+    /// neighbouring position instead. N.I.N.A. then waited forever for a position that could never
+    /// be reported, and the move had to be cancelled by hand.
+    ///
+    /// The minimum drive step describes the smallest movement the lens will make, not a grid it
+    /// requires requests to sit on, so <c>XSDK_SetFocusPos</c> accepts any value in range and the
+    /// lens goes as close as it can. It is still reported to N.I.N.A. as the focuser's step size.
+    /// </remarks>
     public int ToPulse(int position, out FocusClamp clamp)
     {
         clamp = FocusClamp.None;
@@ -119,12 +129,6 @@ public sealed class FocusTravelMap
         {
             clamp = FocusClamp.BeyondClosestStop;
             position = Range;
-        }
-
-        if (Step > 1)
-        {
-            position = (int)Math.Round(position / (double)Step) * Step;
-            position = Math.Clamp(position, 0, Range);
         }
 
         return TravelMin + position;

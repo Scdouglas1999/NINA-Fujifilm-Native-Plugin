@@ -144,6 +144,21 @@ internal static class PluginLogic
                     Check($"position round-trips within one drive step ({travel.Step})",
                         Math.Abs(roundTrip - pos) <= travel.Step, $"{pos} -> {roundTrip}");
 
+                    // Every position must be reachable AND come back unchanged. A field report
+                    // showed requests being snapped to a multiple of the drive step, which made
+                    // most positions impossible to report and left NINA waiting forever.
+                    var unreachable = 0;
+                    var distinct = new System.Collections.Generic.HashSet<int>();
+                    for (var p = 0; p <= travel.Range; p++)
+                    {
+                        var back = travel.ToPosition(travel.ToPulse(p));
+                        distinct.Add(back);
+                        if (back != p) unreachable++;
+                    }
+                    Check($"all {travel.Range + 1} positions round-trip unchanged (drive step {travel.Step})",
+                        unreachable == 0 && distinct.Count == travel.Range + 1,
+                        unreachable == 0 ? "" : $"{unreachable} positions could not be reported");
+
                     // Every position in the range must map to a reachable pulse.
                     var bad = 0;
                     for (var p = 0; p <= travel.Range; p += Math.Max(1, travel.Range / 200))

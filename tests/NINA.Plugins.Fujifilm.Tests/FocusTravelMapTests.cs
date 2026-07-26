@@ -139,13 +139,15 @@ public sealed class FocusTravelMapTests
     }
 
     [Fact]
-    public void MinimumDriveStep_QuantisesRequests()
+    public void MinimumDriveStepIsReportedButDoesNotSnapRequests()
     {
+        // The step is the smallest movement the lens makes, not a grid requests must sit on.
+        // Snapping to it made most positions unreachable - see EveryPositionInRangeIsReachable.
         var map = new FocusTravelMap(RecordedInf, RecordedMod, overSearchInfinity: 30, overSearchMod: 20, minDriveStep: 4);
 
         Assert.Equal(4, map.Step);
-        Assert.Equal(map.TravelMin + 8, map.ToPulse(9));
-        Assert.Equal(map.TravelMin + 8, map.ToPulse(10));
+        Assert.Equal(map.TravelMin + 9, map.ToPulse(9));
+        Assert.Equal(map.TravelMin + 10, map.ToPulse(10));
     }
 
     [Fact]
@@ -174,7 +176,7 @@ public sealed class FocusTravelMapTests
     /// minimum drive step 3 - note the negative infinity pulse, which is entirely normal.
     /// </summary>
     [Fact]
-    public void RoundTripStaysWithinOneDriveStep()
+    public void RoundTripIsExactEvenWhenTheLensHasACoarseDriveStep()
     {
         var map = new FocusTravelMap(-1004, 6995, 333, 365, minDriveStep: 3);
 
@@ -183,10 +185,45 @@ public sealed class FocusTravelMapTests
 
         for (var position = 0; position <= map.Range; position++)
         {
-            var roundTripped = map.ToPosition(map.ToPulse(position));
-            Assert.True(Math.Abs(roundTripped - position) <= map.Step,
-                $"position {position} round-tripped to {roundTripped}, more than {map.Step} away");
+            Assert.Equal(position, map.ToPosition(map.ToPulse(position)));
         }
+    }
+
+    /// <summary>
+    /// Reported from the field on a GF 500mm: asking for certain positions left N.I.N.A. stuck in
+    /// "moving" and reporting a neighbouring position, and the move had to be cancelled by hand.
+    /// The lens reports a minimum drive step of 3, and requests were being snapped to a multiple of
+    /// it - so two thirds of the range could never be reported, and N.I.N.A. waited forever for a
+    /// position that did not exist.
+    /// </summary>
+    [Fact]
+    public void EveryPositionInRangeIsReachable()
+    {
+        // 27033 of travel with infinity at 584, as that lens reports it.
+        var map = new FocusTravelMap(0, 26449, 584, 0, minDriveStep: 3);
+
+        Assert.Equal(27033, map.Range);
+        Assert.Equal(584, map.InfinityPosition);
+
+        var distinct = new HashSet<int>();
+        for (var position = 0; position <= map.Range; position++)
+        {
+            distinct.Add(map.ToPosition(map.ToPulse(position)));
+        }
+
+        Assert.Equal(map.Range + 1, distinct.Count);
+    }
+
+    [Theory]
+    [InlineData(584)]   // the reported infinity mark; used to come back as 585
+    [InlineData(400)]   // used to come back as 399
+    [InlineData(585)]
+    [InlineData(399)]
+    public void ReportedFieldPositionsComeBackUnchanged(int position)
+    {
+        var map = new FocusTravelMap(0, 26449, 584, 0, minDriveStep: 3);
+
+        Assert.Equal(position, map.ToPosition(map.ToPulse(position)));
     }
 
     [Fact]
