@@ -1,3 +1,43 @@
+# 3.1.2.0
+
+## Camera session handling
+
+Three defects in the connect path, each provable on its own. **None of them is demonstrated to fix
+the intermittent "cannot connect until I drop the battery" failure that prompted the work** - see
+the caveat below.
+
+- **Sessions are now tracked across the whole plugin.** The table of open camera sessions and their
+  reference counts was per-instance, while the lock guarding it and the SDK-initialised flag were
+  both shared. Several instances of the interop layer exist at once - six were constructed within a
+  single minute in one diagnostics log - so one had no way of knowing another already held the
+  camera, and would open a second handle on it.
+- **A rescan no longer reopens a camera that is already connected.** Detection opened a fresh handle
+  on every device it enumerated, including ones in use. The diagnostics log shows the result: a
+  handle opened at 20:42:22, then three `SEQUENCE` failures on the same device 24 seconds later and
+  "Detection complete: 0 camera(s)" - the camera appearing to vanish from N.I.N.A. while it was
+  connected and working. Detection now describes an already-open device from the session it holds.
+- **The SDK's mandated settle after closing a camera is honoured.** The reference carries an
+  IMPORTANT NOTICE requiring at least 600ms after `XSDK_Close`. It is enforced immediately before
+  the next open rather than by blocking inside the close, so disconnecting stays responsive and only
+  a close-then-reopen pays for it.
+
+### What was not demonstrated
+
+On the camera available here, five close-and-reopen cycles with no settle at all succeeded, and a
+duplicate open was refused with `INTERNAL` rather than `SEQUENCE`. So these are corrections that rest
+on the documented SDK contract, on a session table that provably could not do its job across
+concurrent instances, and on failures recorded in real logs - not on a reproduction of the reported
+symptom. If you have seen a camera refuse to connect until the battery is removed, a diagnostics
+export from a failure is still the most useful thing you can send.
+
+## Testing
+
+The hardware probe now runs the pre-fix logic and the shipped logic side by side against a connected
+camera, so each defect corrected since 3.0.2.0 is demonstrated rather than asserted. On a GFX100S II,
+11 of 13 reproduce the old failure and show it corrected; the other two report "not reproduced"
+rather than counting as passes, because that lens is not parked past infinity and lands exactly on
+the commanded pulse, so neither symptom can appear on it.
+
 # 3.1.1.0
 
 ## Focuser positions that could not be reached

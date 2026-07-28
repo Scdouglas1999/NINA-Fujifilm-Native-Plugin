@@ -75,7 +75,7 @@ public class FujiFocuserSdkAdapter : IFocuser, INotifyPropertyChanged
     }
 
     public string DriverInfo => "Fujifilm Native Driver";
-    public string DriverVersion => "3.1.1";
+    public string DriverVersion => "3.1.2";
     public int InterfaceVersion => 1;
 
     public bool Absolute => true;

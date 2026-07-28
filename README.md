@@ -208,6 +208,7 @@ The plugin adds these to N.I.N.A.'s advanced sequencer under the **Fujifilm** ca
 | **Black & White Preview** | Debayering disabled | Enable **Debayer Image** in N.I.N.A. imaging options |
 | **Live view looks stretched or poor** | Fixed in 3.1.0.0: the frame size was estimated wrongly, and the default quality was one some bodies reject | Update to 3.1.0.0; nothing needs configuring |
 | **Lens Not Detected** | Manual focus lens or adapter | Only electronic lenses report a programmable focus range |
+| **Camera vanishes from N.I.N.A. during an equipment rescan** | Detection used to open a second handle on an already-connected camera, which the SDK refuses | Fixed in 3.1.2.0 |
 | **Battery Unavailable** | The camera did not accept any known battery query layout | Use the camera display. The plugin probes rather than relying on a model list, so this is rare |
 
 ---

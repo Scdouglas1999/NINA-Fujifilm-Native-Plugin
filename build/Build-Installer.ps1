@@ -1,6 +1,6 @@
 param(
     [string]$Configuration = "Release",
-    [string]$Version = "3.1.1.0",
+    [string]$Version = "3.1.2.0",
     [string]$InnoSetupCompiler = $env:ISCC_EXE
 )
 
