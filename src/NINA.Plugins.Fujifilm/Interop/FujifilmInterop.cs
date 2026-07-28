@@ -23,6 +23,18 @@ public sealed class FujifilmInterop : IFujifilmInterop
     private static readonly SemaphoreSlim _detectionLock = new(1, 1); // Serialize detection operations
     private static bool _isSdkInitializedGlobally;
 
+    /// <summary>
+    /// When XSDK_Close last returned, so the SDK's mandated settle can be honoured before the
+    /// camera is opened again. See <see cref="WaitForCloseSettleAsync"/>.
+    /// </summary>
+    private static DateTime _lastCloseCompletedUtc = DateTime.MinValue;
+
+    /// <summary>
+    /// SDK_ProgrammingReference, XSDK_Close, IMPORTANT NOTICE: "Wait at least 600 mS after calling
+    /// XSDK_Close()."
+    /// </summary>
+    private static readonly TimeSpan CloseSettleDuration = TimeSpan.FromMilliseconds(600);
+
     [ImportingConstructor]
     public FujifilmInterop(IFujifilmDiagnosticsService diagnostics)
     {
@@ -101,6 +113,7 @@ public sealed class FujifilmInterop : IFujifilmInterop
             }
 
             _diagnostics.RecordEvent("Interop", "Shutting down Fujifilm SDK runtime");
+            await WaitForCloseSettleAsync(CancellationToken.None).ConfigureAwait(false);
             var exitResult = FujifilmSdkWrapper.XSDK_Exit();
             if (exitResult != FujifilmSdkWrapper.XSDK_COMPLETE)
             {
@@ -176,7 +189,34 @@ public sealed class FujifilmInterop : IFujifilmInterop
             var deviceId = $"ENUM:{index}";
             IntPtr cameraHandle = IntPtr.Zero;
             bool handleOpened = false;
-            
+
+            // If this camera is already connected, describe it from the session we hold rather than
+            // opening a second handle on it. Opening an already-open camera returns
+            // XSDK_ERRCODE_SEQUENCE, and the retries then report zero cameras - so an equipment
+            // rescan while imaging made the camera appear to vanish. Reusing the live handle also
+            // avoids closing a session another part of the plugin is still using.
+            var liveHandle = await GetOpenSessionHandleAsync(deviceId, cancellationToken).ConfigureAwait(false);
+            if (liveHandle != IntPtr.Zero)
+            {
+                _diagnostics.RecordEvent("Interop", $"{deviceId} is already connected; describing it from the open session instead of reopening.");
+
+                var liveInfoResult = FujifilmSdkWrapper.XSDK_GetDeviceInfoEx(liveHandle, out var liveInfo, out _, IntPtr.Zero);
+                if (liveInfoResult == FujifilmSdkWrapper.XSDK_COMPLETE)
+                {
+                    var liveProduct = liveInfo.strProduct?.Trim() ?? string.Empty;
+                    cameras.Add(new FujifilmCameraInfo(
+                        string.IsNullOrWhiteSpace(liveProduct) ? $"Fujifilm Camera {index}" : liveProduct,
+                        liveInfo.strSerialNo?.Trim() ?? string.Empty,
+                        deviceId));
+                }
+                else
+                {
+                    _diagnostics.RecordEvent("Interop", $"GetDeviceInfoEx on the open session for {deviceId} returned {liveInfoResult}; skipping this device.");
+                }
+
+                continue;
+            }
+
             try
             {
                 // Retry logic for opening camera (handles transient SEQUENCE errors)
@@ -192,6 +232,7 @@ public sealed class FujifilmInterop : IFujifilmInterop
                         await Task.Delay(300 * retryCount, cancellationToken).ConfigureAwait(false); // Exponential backoff
                     }
                     
+                    await WaitForCloseSettleAsync(cancellationToken).ConfigureAwait(false);
                     openResult = FujifilmSdkWrapper.XSDK_OpenEx(deviceId, out cameraHandle, out var mode, IntPtr.Zero);
                     
                     if (openResult == FujifilmSdkWrapper.XSDK_COMPLETE)
@@ -304,11 +345,67 @@ public sealed class FujifilmInterop : IFujifilmInterop
         {
             _diagnostics.RecordEvent("Interop", $"Exception closing camera handle during {context}: {ex.GetType().Name}: {ex.Message}");
         }
+        finally
+        {
+            // Stamped even when the close reported a failure: the camera still needs the settle.
+            _lastCloseCompletedUtc = DateTime.UtcNow;
+        }
     }
 
-    // Dictionary to track open sessions and their reference counts
-    // Key: DeviceId, Value: (Session, RefCount)
-    private readonly Dictionary<string, (FujifilmCameraSession Session, int RefCount)> _openSessions = new();
+    /// <summary>
+    /// Open camera sessions and their reference counts, keyed by device id.
+    /// </summary>
+    /// <remarks>
+    /// Static, because several instances of this class exist at once - six were constructed within
+    /// a single minute in one diagnostics log. While this was per-instance, one instance had no way
+    /// of knowing another already held the camera, so it issued a second XSDK_OpenEx on an
+    /// already-open device. The SDK answers that with XSDK_ERRCODE_SEQUENCE, which surfaces as
+    /// "cannot connect" and clears only when the camera is power-cycled. Guarded by the static
+    /// <see cref="_globalLock"/>, which was already static.
+    /// </remarks>
+    private static readonly Dictionary<string, (FujifilmCameraSession Session, int RefCount)> _openSessions = new();
+
+    /// <summary>
+    /// The live handle for a device, or <see cref="IntPtr.Zero"/> when it is not currently open.
+    /// </summary>
+    /// <remarks>
+    /// Takes <see cref="_globalLock"/>, the same lock every other reader and writer of the session
+    /// table uses. Callers must not already hold it. Detection holds only <c>_detectionLock</c>, and
+    /// nothing acquires that while holding the global lock, so the ordering is consistent.
+    /// </remarks>
+    private static async Task<IntPtr> GetOpenSessionHandleAsync(string deviceId, CancellationToken cancellationToken)
+    {
+        await _globalLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return _openSessions.TryGetValue(deviceId, out var entry) ? entry.Session.Handle : IntPtr.Zero;
+        }
+        finally
+        {
+            _globalLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Waits out the remainder of the SDK's mandated settle after the most recent close.
+    /// </summary>
+    /// <remarks>
+    /// The reference requires at least 600ms after XSDK_Close before the runtime is used again.
+    /// Enforcing it here, immediately before the camera is opened, rather than by blocking inside
+    /// the close, means a disconnect stays responsive while a close-then-reopen still honours it.
+    /// </remarks>
+    private async Task WaitForCloseSettleAsync(CancellationToken cancellationToken)
+    {
+        var elapsed = DateTime.UtcNow - _lastCloseCompletedUtc;
+        if (elapsed >= CloseSettleDuration || elapsed < TimeSpan.Zero)
+        {
+            return;
+        }
+
+        var remaining = CloseSettleDuration - elapsed;
+        _diagnostics.RecordEvent("Interop", $"Waiting {remaining.TotalMilliseconds:0}ms for the SDK's post-close settle before reopening.");
+        await Task.Delay(remaining, cancellationToken).ConfigureAwait(false);
+    }
 
     public async Task<FujifilmCameraSession> OpenCameraAsync(string deviceId, CancellationToken cancellationToken)
     {
@@ -329,6 +426,7 @@ public sealed class FujifilmInterop : IFujifilmInterop
             }
 
             // No existing session, open a new one
+            await WaitForCloseSettleAsync(cancellationToken).ConfigureAwait(false);
             _diagnostics.RecordEvent("Interop", $"Opening Fujifilm camera {deviceId}");
             int openResult = FujifilmSdkWrapper.XSDK_OpenEx(deviceId, out var handle, out var mode, IntPtr.Zero);
             FujifilmSdkWrapper.CheckResult(IntPtr.Zero, openResult, nameof(FujifilmSdkWrapper.XSDK_OpenEx));
