@@ -37,6 +37,17 @@ internal static class Sdk
     [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_GetLensInfo(IntPtr h, out LensInformation info);
     [DllImport(L, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetProp")] public static extern int XSDK_GetProp_Battery8(IntPtr h, long code, long param, out long a, out long b, out long c, out long d, out long e, out long f, out long g, out long i);
 
+    // The four-parameter CapSensitivity as it shipped before 3.0.4.0.
+    [DllImport(L, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_CapSensitivity")]
+    public static extern int XSDK_CapSensitivity_FourArg(IntPtr h, ref long lDR, ref long plNum, IntPtr pl);
+    [DllImport(L, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetProp")]
+    public static extern int XSDK_GetProp_Buffer(IntPtr h, long code, long param, IntPtr pData);
+    // ref, not out, so both slots can be seeded with a sentinel and checked afterwards.
+    [DllImport(L, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetProp")]
+    public static extern int XSDK_GetProp_TwoRef(IntPtr h, long code, long param, ref long v1, ref long v2);
+    [DllImport(L, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int XSDK_GetImageSize(IntPtr h, out long size);
+
     [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_GetMode(IntPtr h, out long m);
     [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_GetAEMode(IntPtr h, out long m);
     [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_SetSensitivity(IntPtr h, long v);

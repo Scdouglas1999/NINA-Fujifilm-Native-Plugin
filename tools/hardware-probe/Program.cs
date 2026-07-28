@@ -327,6 +327,7 @@ internal static class Program
                 Console.WriteLine("\n== CAPTURE round-trip (nothing written to the card) ==");
 
                 Console.WriteLine("\n== Remaining plugin features ==");
+                Regressions.Run(h, codes);
                 failures += SessionCycle.Run(ref h);
                 Extras.LensInfo(h);
                 Extras.Battery(h);

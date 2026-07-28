@@ -34,6 +34,21 @@ cancelling an exposure in progress.
 
 Every setting it changes is applied, read back, and restored to the value it found.
 
+## Demonstrating the historical fixes
+
+`Regressions.cs` runs the pre-fix logic and the shipped logic side by side against the attached
+camera, so each corrected defect is demonstrated rather than asserted. Where the old behaviour was a
+call signature or a constant, it issues both the old and the new call and prints what the camera
+answered. Where it was arithmetic, it runs both against the camera's own capability block.
+
+A check that cannot be reproduced on the attached hardware is reported as such rather than being
+counted as a pass. Two are expected to report that way on a lens that lands exactly on the commanded
+pulse and is not parked past infinity - the symptoms need a lens that behaves otherwise, and the
+corresponding unit tests cover them.
+
+The shutter checks need the camera in Manual exposure mode; in Aperture or Shutter Priority it
+enumerates a single shutter speed and they are skipped with a note.
+
 ## No camera model is named
 
 The probe derives everything from what the camera reports - its advertised API codes and its `Cap*`
