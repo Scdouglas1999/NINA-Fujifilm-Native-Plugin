@@ -50,9 +50,14 @@ internal static class Sdk
 
     [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_GetMode(IntPtr h, out long m);
     [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_GetAEMode(IntPtr h, out long m);
+    [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_SetAEMode(IntPtr h, long m);
     [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_SetSensitivity(IntPtr h, long v);
     [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_GetSensitivity(IntPtr h, out long v);
     [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_CapSensitivity(IntPtr h, ref long plNum, IntPtr pl);
+    [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_GetLensZoomPos(IntPtr h, out long v);
+    [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_CapAperture(IntPtr h, long zoomPos, ref long plNum, IntPtr pl);
+    [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_SetAperture(IntPtr h, long fNumber);
+    [DllImport(L, CallingConvention = CallingConvention.Cdecl)] public static extern int XSDK_GetAperture(IntPtr h, out long fNumber);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
     public struct XSDK_DeviceInformation

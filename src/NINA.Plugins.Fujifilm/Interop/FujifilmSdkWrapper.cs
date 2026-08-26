@@ -267,6 +267,18 @@ internal static class FujifilmSdkWrapper
     [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetSensitivity")]
     public static extern int XSDK_GetSensitivity(IntPtr hCamera, out int plSensitivity);
 
+    [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetLensZoomPos")]
+    public static extern int XSDK_GetLensZoomPos(IntPtr hCamera, out int plZoomPos);
+
+    [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_CapAperture")]
+    public static extern int XSDK_CapAperture(IntPtr hCamera, int lZoomPos, ref int plNumAperture, IntPtr plFNumber);
+
+    [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_SetAperture")]
+    public static extern int XSDK_SetAperture(IntPtr hCamera, int lFNumber);
+
+    [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_GetAperture")]
+    public static extern int XSDK_GetAperture(IntPtr hCamera, out int plFNumber);
+
     [DllImport(SdkDllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "XSDK_SetMode")]
     public static extern int XSDK_SetMode(IntPtr hCamera, int lMode);
 

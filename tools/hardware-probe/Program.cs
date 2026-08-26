@@ -76,7 +76,7 @@ internal static class Program
         Console.WriteLine($"    restored to {restored} (result={rb})");
     }
 
-    static int Main()
+    static int Main(string[] args)
     {
         Console.WriteLine("== XSDK_Init ==");
         var r = XSDK_Init(IntPtr.Zero);
@@ -95,7 +95,73 @@ internal static class Program
 
             try
             {
-                XSDK_SetPriorityMode(h, 0x0002); // PC priority
+                var priorityResult = XSDK_SetPriorityMode(h, 0x0002); // PC priority
+
+                if (args.Any(arg => string.Equals(arg, "--aperture-only", StringComparison.OrdinalIgnoreCase)))
+                {
+                    Console.WriteLine("\n== Aperture-only hardware check ==");
+                    Console.WriteLine($"  SetPriorityMode(PC) -> {priorityResult}");
+                    if (XSDK_GetMode(h, out var apertureMode) == 0)
+                        Console.WriteLine($"  Camera mode: 0x{apertureMode:X}");
+                    var haveOriginalAeMode = XSDK_GetAEMode(h, out var apertureAeMode) == 0;
+                    if (haveOriginalAeMode)
+                        Console.WriteLine($"  AE mode: 0x{apertureAeMode:X}");
+                    var apertureCodes = new System.Collections.Generic.HashSet<long>();
+                    if (XSDK_GetDeviceInfoEx(h, out var apertureInfo, out var apertureApiCount, IntPtr.Zero) == 0)
+                    {
+                        Console.WriteLine($"  Camera: {apertureInfo.strProduct?.Trim()} firmware {apertureInfo.strFirmware?.Trim()}");
+                        if (apertureApiCount > 0)
+                        {
+                            var nativeLongSize = OperatingSystem.IsWindows() ? sizeof(int) : sizeof(long);
+                            var apiBuffer = Marshal.AllocHGlobal(checked((int)apertureApiCount * nativeLongSize));
+                            try
+                            {
+                                var returnedCount = apertureApiCount;
+                                if (XSDK_GetDeviceInfoEx(h, out _, out returnedCount, apiBuffer) == 0 &&
+                                    returnedCount >= 0 && returnedCount <= apertureApiCount)
+                                {
+                                    for (var i = 0; i < returnedCount; i++)
+                                    {
+                                        var offset = checked((int)i * nativeLongSize);
+                                        apertureCodes.Add(nativeLongSize == sizeof(int)
+                                            ? Marshal.ReadInt32(apiBuffer, offset)
+                                            : Marshal.ReadInt64(apiBuffer, offset));
+                                    }
+                                }
+                            }
+                            finally { Marshal.FreeHGlobal(apiBuffer); }
+                        }
+                    }
+                    if (XSDK_GetLensInfo(h, out var apertureLens) == 0)
+                        Console.WriteLine($"  Lens: {apertureLens.strProductName?.Trim()} ({apertureLens.strModel?.Trim()})");
+
+                    var setManualResult = XSDK_SetAEMode(h, 0x0001);
+                    if (setManualResult == 0)
+                    {
+                        Console.WriteLine("  Temporarily set AE mode Manual -> 0");
+                    }
+                    else
+                    {
+                        XSDK_GetErrorNumber(h, out var modeErrorApi, out var modeErrorCode);
+                        Console.WriteLine($"  Temporarily set AE mode Manual -> {setManualResult}, API=0x{modeErrorApi:X}, error=0x{modeErrorCode:X}");
+                    }
+                    try
+                    {
+                        if (setManualResult == 0)
+                            failures += Aperture.Run(h, apertureCodes);
+                        else
+                            failures++;
+                    }
+                    finally
+                    {
+                        if (haveOriginalAeMode)
+                        {
+                            var restoreAeResult = XSDK_SetAEMode(h, apertureAeMode);
+                            Console.WriteLine($"  Restore AE mode 0x{apertureAeMode:X} -> {restoreAeResult}");
+                        }
+                    }
+                    return failures == 0 ? 0 : 1;
+                }
 
                 Console.WriteLine("\n== Device ==");
                 r = XSDK_GetDeviceInfoEx(h, out var info, out var apiCount, IntPtr.Zero);
@@ -259,6 +325,7 @@ internal static class Program
                 Settle.Run(h);
 
                 Console.WriteLine("\n== WRITE round-trip (restores original values) ==");
+                failures += Aperture.Run(h, codes);
                 RoundTrip("RAWOutputDepth", GetRawDepth, SetRawDepth, 1);   // 16-bit -> 14-bit -> back
                 RoundTrip("RAWCompression", GetRawComp, SetRawComp, 2);     // uncompressed -> lossless -> back
                 RoundTrip("LongExposureNR", GetLENR, SetLENR, OFF);         // on -> off -> back

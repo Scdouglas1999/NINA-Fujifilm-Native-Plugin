@@ -34,6 +34,14 @@ cancelling an exposure in progress.
 
 Every setting it changes is applied, read back, and restored to the value it found.
 
+Electronic aperture gets its own sweep. The probe asks the attached lens for the available
+f-numbers at its current zoom position, sets and reads back every advertised value, then restores
+the aperture that was active before the sweep. Run it once with each lens under test to compare a
+native Fujinon lens with a third-party electronic lens without adding model-specific assumptions.
+Use `dotnet probe.dll --aperture-only` for the isolated aperture test. It temporarily selects Manual
+exposure mode because the SDK rejects aperture writes in Program mode, then restores the original
+aperture and exposure mode.
+
 ## Demonstrating the historical fixes
 
 `Regressions.cs` runs the pre-fix logic and the shipped logic side by side against the attached

@@ -6,21 +6,49 @@
     <DataTemplate x:Key="NINA.Plugins.Fujifilm.UI.FujiLensInfoVM_Dockable">
         <Border Padding="6" Background="{DynamicResource BackgroundBrush}">
             <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
                 <TextBlock Text="Lens:"
                            Grid.Column="0"
+                           Grid.Row="0"
                            Foreground="{DynamicResource PrimaryBrush}"
                            FontWeight="SemiBold"
                            Margin="0,0,8,0"
                            VerticalAlignment="Center" />
                 <TextBlock Text="{Binding LensText}"
                            Grid.Column="1"
+                           Grid.Row="0"
                            Foreground="{DynamicResource PrimaryBrush}"
                            TextWrapping="Wrap"
                            VerticalAlignment="Center" />
+                <TextBlock Text="Aperture:"
+                           Grid.Column="0"
+                           Grid.Row="1"
+                           Foreground="{DynamicResource PrimaryBrush}"
+                           FontWeight="SemiBold"
+                           Margin="0,6,8,0"
+                           VerticalAlignment="Center" />
+                <StackPanel Grid.Column="1" Grid.Row="1" Orientation="Horizontal" Margin="0,6,0,0">
+                    <TextBlock Text="f/" Foreground="{DynamicResource PrimaryBrush}" VerticalAlignment="Center" />
+                    <ComboBox ItemsSource="{Binding AvailableApertures}"
+                              SelectedItem="{Binding SelectedAperture, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                              IsEnabled="{Binding CanControlAperture}"
+                              MinWidth="72" />
+                </StackPanel>
+                <TextBlock Text="{Binding ApertureError}"
+                           Grid.Column="0"
+                           Grid.ColumnSpan="2"
+                           Grid.Row="2"
+                           Foreground="OrangeRed"
+                           TextWrapping="Wrap"
+                           Margin="0,4,0,0" />
             </Grid>
         </Border>
     </DataTemplate>

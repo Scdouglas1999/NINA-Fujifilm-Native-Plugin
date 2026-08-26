@@ -21,6 +21,7 @@
     <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Configuration\CameraModelRules.cs" Link="Source\CameraModelRules.cs" />
     <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Devices\FujifilmShutterSpeedCatalog.cs" Link="Source\FujifilmShutterSpeedCatalog.cs" />
     <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Devices\FujifilmSensitivityCatalog.cs" Link="Source\FujifilmSensitivityCatalog.cs" />
+    <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Devices\FujifilmApertureCatalog.cs" Link="Source\FujifilmApertureCatalog.cs" />
     <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Devices\FujifilmBulbCapability.cs" Link="Source\FujifilmBulbCapability.cs" />
     <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Devices\FocusTravelMap.cs" Link="Source\FocusTravelMap.cs" />
     <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Devices\FujiApiCapabilities.cs" Link="Source\FujiApiCapabilities.cs" />

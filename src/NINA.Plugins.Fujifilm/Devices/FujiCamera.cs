@@ -38,6 +38,7 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
     private IReadOnlyList<int> _supportedSensitivities = Array.Empty<int>();
     private IReadOnlyDictionary<int, double> _shutterCodeToDuration = new Dictionary<int, double>();
     private IReadOnlyList<int> _supportedShutterCodes = Array.Empty<int>(); // Store originally queried codes for validation
+    private IReadOnlyList<int> _supportedApertureValues = Array.Empty<int>();
     private bool _bulbCapable;
     private FujiApiCapabilities _apiCapabilities = FujiApiCapabilities.Unknown;
     private bool _longExposureNoiseReductionOn;
@@ -55,6 +56,15 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
     private FujiCameraMetadata _metadata = FujiCameraMetadata.Empty;
 
     public bool SupportsBulb => _bulbCapable;
+
+    public bool SupportsApertureControl =>
+        IsConnected &&
+        _supportedApertureValues.Count > 0;
+
+    public IReadOnlyList<double> AvailableApertures =>
+        _supportedApertureValues.Select(FujifilmApertureCatalog.ToFNumber).ToArray();
+
+    public double CurrentAperture => _metadata.CurrentAperture;
 
     public FujiCameraCapabilities GetCapabilitiesSnapshot()
     {
@@ -914,11 +924,17 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
                 _diagnostics.RecordEvent("Camera", $"XSDK_GetLensInfo FAILED: result={lensInfoResult}, ApiCode=0x{error.ApiCode:X}, ErrCode=0x{error.ErrorCode:X}. No lens detected or lens detection not supported.");
             }
 
-            // Get current aperture (f-number * 100)
-            var apertureResult = FujifilmSdkWrapper.XSDK_GetProp(
+            // Aperture choices can depend on zoom position, so refresh zoom before asking the lens.
+            if (_metadata.IsZoomLens)
+            {
+                RefreshZoomPosition();
+            }
+
+            _supportedApertureValues = QueryApertureValues(_metadata.CurrentZoomPosition);
+
+            // Get current aperture (f-number * 100).
+            var apertureResult = FujifilmSdkWrapper.XSDK_GetAperture(
                 _session.Handle,
-                FujifilmSdkWrapper.API_CODE_GetAperture,
-                FujifilmSdkWrapper.API_PARAM_Aperture,
                 out int apertureValue);
 
             if (apertureResult == FujifilmSdkWrapper.XSDK_COMPLETE)
@@ -932,15 +948,234 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
                 _diagnostics.RecordEvent("Camera", $"GetAperture failed: result={apertureResult}");
             }
 
-            // Get zoom position for zoom lenses
-            if (_metadata.IsZoomLens)
-            {
-                RefreshZoomPosition();
-            }
+            RaisePropertyChanged(nameof(SupportsApertureControl));
+            RaisePropertyChanged(nameof(AvailableApertures));
+            RaisePropertyChanged(nameof(CurrentAperture));
         }
         catch (Exception ex)
         {
             _diagnostics.RecordEvent("Camera", $"Lens metadata refresh error: {ex.Message}");
+        }
+    }
+
+    private IReadOnlyList<int> QueryApertureValues(int zoomPosition)
+    {
+        if (_session == null)
+        {
+            return Array.Empty<int>();
+        }
+
+        var count = 0;
+        try
+        {
+            var countResult = FujifilmSdkWrapper.XSDK_CapAperture(
+                _session.Handle, zoomPosition, ref count, IntPtr.Zero);
+            if (countResult != FujifilmSdkWrapper.XSDK_COMPLETE || count <= 0)
+            {
+                _diagnostics.RecordEvent("Camera",
+                    $"CapAperture returned no values for zoom position {zoomPosition} (result={countResult}, count={count}).");
+                return Array.Empty<int>();
+            }
+
+            var capacity = count;
+            var buffer = Marshal.AllocHGlobal(checked(capacity * sizeof(int)));
+            try
+            {
+                var dataResult = FujifilmSdkWrapper.XSDK_CapAperture(
+                    _session.Handle, zoomPosition, ref count, buffer);
+                if (dataResult != FujifilmSdkWrapper.XSDK_COMPLETE || count < 0 || count > capacity)
+                {
+                    _diagnostics.RecordEvent("Camera",
+                        $"CapAperture value query failed (result={dataResult}, count={count}, capacity={capacity}).");
+                    return Array.Empty<int>();
+                }
+
+                var reported = new int[count];
+                for (var i = 0; i < count; i++)
+                {
+                    reported[i] = Marshal.ReadInt32(buffer, i * sizeof(int));
+                }
+
+                var manual = FujifilmApertureCatalog.SelectManualValues(reported);
+                _diagnostics.RecordEvent("Camera",
+                    $"Lens advertises {manual.Count} manual aperture value(s) at zoom position {zoomPosition}: " +
+                    string.Join(", ", manual.Select(FujifilmApertureCatalog.Describe)));
+                return manual;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+        catch (Exception ex)
+        {
+            _diagnostics.RecordEvent("Camera", $"Aperture capability query failed: {ex.Message}");
+            return Array.Empty<int>();
+        }
+    }
+
+    public bool TrySetAperture(double fNumber, out string error)
+    {
+        error = string.Empty;
+        if (_session == null)
+        {
+            error = "Cannot set aperture: the camera is not connected.";
+            return false;
+        }
+
+        // The aperture range can change with zoom position, and an electronic lens can be swapped
+        // while the camera session remains open. Treat the lens as authoritative at command time.
+        var zoomPosition = _metadata.CurrentZoomPosition;
+        if (FujifilmSdkWrapper.XSDK_GetLensZoomPos(_session.Handle, out var currentZoomPosition) ==
+            FujifilmSdkWrapper.XSDK_COMPLETE)
+        {
+            zoomPosition = currentZoomPosition;
+            _metadata.CurrentZoomPosition = currentZoomPosition;
+        }
+
+        var currentApertureValues = QueryApertureValues(zoomPosition);
+        if (!_supportedApertureValues.SequenceEqual(currentApertureValues))
+        {
+            _supportedApertureValues = currentApertureValues;
+            RaisePropertyChanged(nameof(SupportsApertureControl));
+            RaisePropertyChanged(nameof(AvailableApertures));
+        }
+
+        if (_supportedApertureValues.Count == 0)
+        {
+            error = "The attached lens reports no manually selectable apertures. Check that its aperture ring is set to A.";
+            return false;
+        }
+
+        int requested;
+        try
+        {
+            requested = FujifilmApertureCatalog.ToSdkValue(fNumber);
+        }
+        catch (Exception)
+        {
+            error = $"Aperture f/{fNumber:0.0#} is invalid.";
+            return false;
+        }
+
+        if (!_supportedApertureValues.Contains(requested))
+        {
+            error = $"Aperture f/{fNumber:0.0#} is not advertised by the connected lens.";
+            return false;
+        }
+
+        var originalAEMode = FujifilmSdkWrapper.XSDK_AE_OFF;
+        var originalAperture = 0;
+        var haveOriginalAperture = false;
+        var changedAEMode = false;
+        var apertureWriteCompleted = false;
+        var apertureSet = false;
+        try
+        {
+            haveOriginalAperture = FujifilmSdkWrapper.XSDK_GetAperture(
+                _session.Handle, out originalAperture) == FujifilmSdkWrapper.XSDK_COMPLETE;
+
+            var getAEModeResult = FujifilmSdkWrapper.XSDK_GetAEMode(_session.Handle, out originalAEMode);
+            if (getAEModeResult != FujifilmSdkWrapper.XSDK_COMPLETE ||
+                originalAEMode != FujifilmSdkWrapper.XSDK_AE_OFF)
+            {
+                var setAEModeResult = FujifilmSdkWrapper.XSDK_SetAEMode(
+                    _session.Handle,
+                    FujifilmSdkWrapper.XSDK_AE_OFF);
+                if (setAEModeResult != FujifilmSdkWrapper.XSDK_COMPLETE)
+                {
+                    var sdkError = FujifilmSdkWrapper.GetLastError(_session.Handle);
+                    error = $"Cannot enable Manual exposure mode for aperture control " +
+                            $"(result={setAEModeResult}, error=0x{sdkError.ErrorCode:X}).";
+                    _diagnostics.RecordEvent("Camera", error);
+                    return false;
+                }
+
+                changedAEMode = getAEModeResult == FujifilmSdkWrapper.XSDK_COMPLETE;
+                _lastAEModeCode = FujifilmSdkWrapper.XSDK_AE_OFF;
+                _diagnostics.RecordEvent(
+                    "Camera",
+                    $"Changed AE mode from 0x{originalAEMode:X} to Manual for aperture control.");
+            }
+
+            var setResult = FujifilmSdkWrapper.XSDK_SetAperture(_session.Handle, requested);
+            if (setResult != FujifilmSdkWrapper.XSDK_COMPLETE)
+            {
+                var sdkError = FujifilmSdkWrapper.GetLastError(_session.Handle);
+                error = $"The camera refused aperture {FujifilmApertureCatalog.Describe(requested)} " +
+                        $"(result={setResult}, error=0x{sdkError.ErrorCode:X}). Check the lens aperture ring and exposure mode.";
+                _diagnostics.RecordEvent("Camera", error);
+                return false;
+            }
+            apertureWriteCompleted = true;
+
+            var getResult = FujifilmSdkWrapper.XSDK_GetAperture(_session.Handle, out var actual);
+            if (getResult != FujifilmSdkWrapper.XSDK_COMPLETE || actual != requested)
+            {
+                error = getResult != FujifilmSdkWrapper.XSDK_COMPLETE
+                    ? $"Aperture was written, but the camera did not return a value for verification (result={getResult})."
+                    : $"Requested {FujifilmApertureCatalog.Describe(requested)}, but the camera reports {FujifilmApertureCatalog.Describe(actual)}.";
+                _diagnostics.RecordEvent("Camera", error);
+                return false;
+            }
+
+            _metadata.CurrentAperture = FujifilmApertureCatalog.ToFNumber(actual);
+            _diagnostics.RecordEvent("Camera", $"Aperture set and verified at {FujifilmApertureCatalog.Describe(actual)}.");
+            RaisePropertyChanged(nameof(CurrentAperture));
+            apertureSet = true;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = $"Error setting aperture: {ex.Message}";
+            _diagnostics.RecordEvent("Camera", error);
+            return false;
+        }
+        finally
+        {
+            if (apertureWriteCompleted && !apertureSet && haveOriginalAperture && _session != null)
+            {
+                var restoreApertureResult = FujifilmSdkWrapper.XSDK_SetAperture(
+                    _session.Handle, originalAperture);
+                var verifyApertureResult = FujifilmSdkWrapper.XSDK_GetAperture(
+                    _session.Handle, out var restoredAperture);
+                var apertureRestored = restoreApertureResult == FujifilmSdkWrapper.XSDK_COMPLETE &&
+                                       verifyApertureResult == FujifilmSdkWrapper.XSDK_COMPLETE &&
+                                       restoredAperture == originalAperture;
+                _diagnostics.RecordEvent(
+                    "Camera",
+                    apertureRestored
+                        ? $"Restored aperture to {FujifilmApertureCatalog.Describe(originalAperture)} after verification failure."
+                        : $"Failed to restore aperture {FujifilmApertureCatalog.Describe(originalAperture)} after verification failure " +
+                          $"(set={restoreApertureResult}, get={verifyApertureResult}, actual={restoredAperture}).");
+                if (!apertureRestored)
+                {
+                    error += " The previous aperture could not be restored; reconnect the camera and verify its settings.";
+                }
+            }
+
+            // A successful aperture command must remain in Manual mode; restoring Program or a
+            // priority mode would immediately hand aperture selection back to the camera. If the
+            // write failed, undo the mode change so a failed command has no unrelated side effect.
+            if (changedAEMode && !apertureSet && _session != null)
+            {
+                var restoreResult = FujifilmSdkWrapper.XSDK_SetAEMode(_session.Handle, originalAEMode);
+                var verifyModeResult = FujifilmSdkWrapper.XSDK_GetAEMode(
+                    _session.Handle, out var restoredAEMode);
+                if (restoreResult == FujifilmSdkWrapper.XSDK_COMPLETE &&
+                    verifyModeResult == FujifilmSdkWrapper.XSDK_COMPLETE &&
+                    restoredAEMode == originalAEMode)
+                {
+                    _lastAEModeCode = originalAEMode;
+                    _diagnostics.RecordEvent("Camera", $"Restored AE mode to 0x{originalAEMode:X} after aperture failure.");
+                }
+                else
+                {
+                    _diagnostics.RecordEvent("Camera",
+                        $"Failed to restore AE mode 0x{originalAEMode:X} (set={restoreResult}, get={verifyModeResult}, actual=0x{restoredAEMode:X}).");
+                    error += " The previous exposure mode could not be restored; reconnect the camera and verify its settings.";
+                }
+            }
         }
     }
 
@@ -1647,9 +1882,13 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
             _supportedSensitivities = Array.Empty<int>();
             _shutterCodeToDuration = new Dictionary<int, double>();
             _supportedShutterCodes = Array.Empty<int>();
+            _supportedApertureValues = Array.Empty<int>();
             _bufferShootCapacity = 0;
             _bufferTotalCapacity = 0;
             RaisePropertyChanged(nameof(IsConnected));
+            RaisePropertyChanged(nameof(SupportsApertureControl));
+            RaisePropertyChanged(nameof(AvailableApertures));
+            RaisePropertyChanged(nameof(CurrentAperture));
         }
     }
 

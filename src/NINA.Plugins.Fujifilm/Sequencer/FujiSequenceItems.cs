@@ -194,3 +194,47 @@ public class DisableFujiLongExposureNR : FujiSequenceItemBase
 
     public override string ToString() => $"Category: {Category}, Item: {nameof(DisableFujiLongExposureNR)}";
 }
+
+/// <summary>Sets the f-number of an attached electronic lens.</summary>
+[ExportMetadata("Name", "Set Fujifilm aperture")]
+[ExportMetadata("Description", "Switches the camera to Manual exposure mode, then sets and verifies the attached electronic lens aperture.")]
+[ExportMetadata("Icon", "PluginSVG")]
+[ExportMetadata("Category", "Fujifilm")]
+[Export(typeof(ISequenceItem))]
+[JsonObject(MemberSerialization.OptIn)]
+public class SetFujiAperture : FujiSequenceItemBase
+{
+    private double _fNumber = 2.8;
+
+    [ImportingConstructor]
+    public SetFujiAperture(IFujiEquipmentRegistry registry) : base(registry) { }
+
+    private SetFujiAperture(SetFujiAperture copyMe) : base(copyMe)
+    {
+        FNumber = copyMe.FNumber;
+    }
+
+    [JsonProperty]
+    public double FNumber
+    {
+        get => _fNumber;
+        set { _fNumber = value; RaisePropertyChanged(); }
+    }
+
+    public override Task Execute(IProgress<ApplicationStatus> progress, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        var camera = RequireCamera();
+        if (!camera.TrySetAperture(FNumber, out var error))
+        {
+            throw new SequenceEntityFailedException(error);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public override object Clone() => new SetFujiAperture(this);
+
+    public override string ToString() =>
+        $"Category: {Category}, Item: {nameof(SetFujiAperture)}, Aperture: f/{FNumber:0.0#}";
+}
