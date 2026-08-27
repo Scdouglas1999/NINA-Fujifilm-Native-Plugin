@@ -924,13 +924,23 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
                 _diagnostics.RecordEvent("Camera", $"XSDK_GetLensInfo FAILED: result={lensInfoResult}, ApiCode=0x{error.ApiCode:X}, ErrCode=0x{error.ErrorCode:X}. No lens detected or lens detection not supported.");
             }
 
-            // Aperture choices can depend on zoom position, so refresh zoom before asking the lens.
-            if (_metadata.IsZoomLens)
+            // CapAperture requires the SDK's lens-position token even for some prime lenses.
+            // Viltrox AF 27/1.2 reports Zoom=False but returns token 1; passing the assumed prime
+            // value 0 makes the otherwise-supported capability call fail.
+            if (FujifilmSdkWrapper.XSDK_GetLensZoomPos(_session.Handle, out var apertureZoomPosition) ==
+                FujifilmSdkWrapper.XSDK_COMPLETE)
             {
-                RefreshZoomPosition();
+                _metadata.CurrentZoomPosition = apertureZoomPosition;
+                _diagnostics.RecordEvent("Camera",
+                    $"Aperture capability lens-position token: {apertureZoomPosition} (Zoom={_metadata.IsZoomLens}).");
             }
 
-            _supportedApertureValues = QueryApertureValues(_metadata.CurrentZoomPosition);
+            // Prime-lens choices are stable for the attached lens. Avoid repeatedly toggling AE
+            // mode on periodic metadata refreshes once they have been discovered.
+            if (_metadata.IsZoomLens || _supportedApertureValues.Count == 0)
+            {
+                _supportedApertureValues = QueryApertureValues(_metadata.CurrentZoomPosition);
+            }
 
             // Get current aperture (f-number * 100).
             var apertureResult = FujifilmSdkWrapper.XSDK_GetAperture(
@@ -959,6 +969,47 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
     }
 
     private IReadOnlyList<int> QueryApertureValues(int zoomPosition)
+    {
+        var values = QueryApertureValuesCore(zoomPosition);
+        if (values.Count > 0 || _session == null)
+        {
+            return values;
+        }
+
+        if (FujifilmSdkWrapper.XSDK_GetAEMode(_session.Handle, out var originalAeMode) !=
+            FujifilmSdkWrapper.XSDK_COMPLETE || originalAeMode == FujifilmSdkWrapper.XSDK_AE_OFF)
+        {
+            return values;
+        }
+
+        var setResult = FujifilmSdkWrapper.XSDK_SetAEMode(
+            _session.Handle,
+            FujifilmSdkWrapper.XSDK_AE_OFF);
+        if (setResult != FujifilmSdkWrapper.XSDK_COMPLETE)
+        {
+            var error = FujifilmSdkWrapper.GetLastError(_session.Handle);
+            _diagnostics.RecordEvent("Camera",
+                $"Could not switch temporarily to Manual AE for aperture enumeration " +
+                $"(result={setResult}, ApiCode=0x{error.ApiCode:X}, ErrCode=0x{error.ErrorCode:X}).");
+            return values;
+        }
+
+        _diagnostics.RecordEvent("Camera",
+            $"Temporarily switched AE mode from 0x{originalAeMode:X} to Manual for aperture enumeration.");
+        try
+        {
+            return QueryApertureValuesCore(zoomPosition);
+        }
+        finally
+        {
+            var restoreResult = FujifilmSdkWrapper.XSDK_SetAEMode(_session.Handle, originalAeMode);
+            _diagnostics.RecordEvent("Camera", restoreResult == FujifilmSdkWrapper.XSDK_COMPLETE
+                ? $"Restored AE mode to 0x{originalAeMode:X} after aperture enumeration."
+                : $"Warning: could not restore AE mode to 0x{originalAeMode:X} after aperture enumeration (result={restoreResult}).");
+        }
+    }
+
+    private IReadOnlyList<int> QueryApertureValuesCore(int zoomPosition)
     {
         if (_session == null)
         {
