@@ -22,6 +22,8 @@ public sealed class FujifilmInterop : IFujifilmInterop
     private static readonly SemaphoreSlim _globalLock = new(1, 1);
     private static readonly SemaphoreSlim _detectionLock = new(1, 1); // Serialize detection operations
     private static bool _isSdkInitializedGlobally;
+    private readonly Dictionary<string, FujifilmCameraInfo> _knownCameras =
+        new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// When XSDK_Close last returned, so the SDK's mandated settle can be honoured before the
@@ -190,28 +192,20 @@ public sealed class FujifilmInterop : IFujifilmInterop
             IntPtr cameraHandle = IntPtr.Zero;
             bool handleOpened = false;
 
-            // If this camera is already connected, describe it from the session we hold rather than
-            // opening a second handle on it. Opening an already-open camera returns
-            // XSDK_ERRCODE_SEQUENCE, and the retries then report zero cameras - so an equipment
-            // rescan while imaging made the camera appear to vanish. Reusing the live handle also
-            // avoids closing a session another part of the plugin is still using.
+            // If this camera is already connected, never call device-info APIs on its live handle.
+            // The native SDK can access-violate when XSDK_GetDeviceInfoEx races other operations on
+            // an active session. Identity was cached during the discovery that preceded connection.
             var liveHandle = await GetOpenSessionHandleAsync(deviceId, cancellationToken).ConfigureAwait(false);
             if (liveHandle != IntPtr.Zero)
             {
-                _diagnostics.RecordEvent("Interop", $"{deviceId} is already connected; describing it from the open session instead of reopening.");
-
-                var liveInfoResult = FujifilmSdkWrapper.XSDK_GetDeviceInfoEx(liveHandle, out var liveInfo, out _, IntPtr.Zero);
-                if (liveInfoResult == FujifilmSdkWrapper.XSDK_COMPLETE)
+                if (_knownCameras.TryGetValue(deviceId, out var knownCamera))
                 {
-                    var liveProduct = liveInfo.strProduct?.Trim() ?? string.Empty;
-                    cameras.Add(new FujifilmCameraInfo(
-                        string.IsNullOrWhiteSpace(liveProduct) ? $"Fujifilm Camera {index}" : liveProduct,
-                        liveInfo.strSerialNo?.Trim() ?? string.Empty,
-                        deviceId));
+                    cameras.Add(knownCamera);
+                    _diagnostics.RecordEvent("Interop", $"{deviceId} is already connected; reused its cached descriptor.");
                 }
                 else
                 {
-                    _diagnostics.RecordEvent("Interop", $"GetDeviceInfoEx on the open session for {deviceId} returned {liveInfoResult}; skipping this device.");
+                    _diagnostics.RecordEvent("Interop", $"{deviceId} is already connected but has no cached descriptor; skipped unsafe live-session inspection.");
                 }
 
                 continue;
@@ -266,10 +260,12 @@ public sealed class FujifilmInterop : IFujifilmInterop
                         var displayName = string.IsNullOrWhiteSpace(productName) ? $"Fujifilm Camera {index}" : productName;
                         _diagnostics.RecordEvent("Interop", $"Creating camera descriptor: DisplayName='{displayName}', DeviceId='{deviceId}'");
                         
-                        cameras.Add(new FujifilmCameraInfo(
+                        var cameraInfo = new FujifilmCameraInfo(
                             displayName,
                             serialNo,
-                            deviceId));
+                            deviceId);
+                        cameras.Add(cameraInfo);
+                        _knownCameras[deviceId] = cameraInfo;
                         break; // Success, exit retry loop
                     }
                     else
