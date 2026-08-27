@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Timers;
@@ -191,7 +192,10 @@ internal sealed class FujiGenericCamera : ICamera
     public IList<int> Gains => _innerCamera.Gains;
     public AsyncObservableCollection<BinningMode> BinningModes => _innerCamera.BinningModes;
     public bool HasSetupDialog => _innerCamera.HasSetupDialog;
-    public IList<string> SupportedActions => _innerCamera.SupportedActions;
+    public IList<string> SupportedActions => _innerCamera.SupportedActions
+        .Concat(FujifilmCameraActions.SupportedActions)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
     public bool CanSubSample => _innerCamera.CanSubSample;
     public bool EnableSubSample { get => _innerCamera.EnableSubSample; set => _innerCamera.EnableSubSample = value; }
     public int SubSampleX { get => _innerCamera.SubSampleX; set => _innerCamera.SubSampleX = value; }
@@ -209,7 +213,10 @@ internal sealed class FujiGenericCamera : ICamera
     public double ElectronsPerADU => _innerCamera.ElectronsPerADU;
     private double _liveViewExposureTime = 1.0;
     public double LiveViewExposureTime { get => _liveViewExposureTime; set => _liveViewExposureTime = value; }
-    public string Action(string actionName, string actionParameters) => _innerCamera.Action(actionName, actionParameters);
+    public string Action(string actionName, string actionParameters) =>
+        string.Equals(actionName, FujifilmCameraActions.SetAperture, StringComparison.OrdinalIgnoreCase)
+            ? _sdkAdapter.ExecuteAction(actionName, actionParameters)
+            : _innerCamera.Action(actionName, actionParameters);
     public string SendCommandString(string command, bool raw = true) => _innerCamera.SendCommandString(command, raw);
     public bool SendCommandBool(string command, bool raw = true) => _innerCamera.SendCommandBool(command, raw);
     public void SendCommandBlind(string command, bool raw = true) => _innerCamera.SendCommandBlind(command, raw);

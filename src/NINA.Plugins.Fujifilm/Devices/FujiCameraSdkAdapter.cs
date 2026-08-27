@@ -212,6 +212,28 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
 
     public int GetGain() => _currentIso;
 
+    public string ExecuteAction(string actionName, string actionParameters)
+    {
+        return FujifilmCameraActions.Execute(
+            actionName,
+            actionParameters,
+            _connected,
+            requestedFNumber =>
+            {
+                lock (_sync)
+                {
+                    if (_cameraState != FujiCameraExposureState.Idle)
+                    {
+                        throw new InvalidOperationException(
+                            "Aperture cannot be changed while an exposure or image download is in progress.");
+                    }
+
+                    var success = _camera.TrySetAperture(requestedFNumber, out var error);
+                    return new ApertureSetResult(success, error, _camera.CurrentAperture);
+                }
+            });
+    }
+
     public int GetMaxGain() => (_isoValues.Length > 0) ? _isoValues[_isoValues.Length - 1] : 0;
 
     public int GetMaxOffset() => 0;

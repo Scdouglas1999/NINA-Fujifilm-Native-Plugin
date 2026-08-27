@@ -59,6 +59,12 @@ Electronic aperture is the exception: supported bodies do not consistently inclu
 Cap/Set/Get aperture calls in that list, so the plugin uses `XSDK_CapAperture` as the authoritative
 capability check.
 
+For integration with other N.I.N.A. plugins and automation tools, the camera advertises the
+ASCOM-style custom action `Camera:SetAperture`. Pass an invariant JSON object such as
+`{"fNumber":2.8}`. On success it returns the requested and camera-verified f-numbers as JSON;
+invalid parameters, unsupported values, disconnected state, and SDK failures are reported as
+exceptions.
+
 ### X-Trans Sensor Support
 
 - **Synthetic Bayer Preview**: Converts X-Trans sensor data to a standard Bayer pattern for full-color live preview in N.I.N.A.
