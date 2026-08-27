@@ -1,4 +1,5 @@
 using NINA.Plugins.Fujifilm.Devices;
+using NINA.Plugins.Fujifilm.Interop;
 
 namespace NINA.Plugins.Fujifilm.Tests;
 
@@ -11,6 +12,14 @@ namespace NINA.Plugins.Fujifilm.Tests;
 /// </summary>
 public sealed class FujifilmBatteryProtocolTests
 {
+    [Fact]
+    public void ChargingStatePreservesSdkMeaning()
+    {
+        Assert.True(FujifilmBatteryProtocol.GetChargingState(FujifilmSdkWrapper.SDK_POWERCAPACITY_DC_CHARGE));
+        Assert.False(FujifilmBatteryProtocol.GetChargingState(FujifilmSdkWrapper.SDK_POWERCAPACITY_DC));
+        Assert.Null(FujifilmBatteryProtocol.GetChargingState(0x7FFFFFFF));
+    }
+
     [Fact]
     public void LargestLayoutIsTriedFirst()
     {

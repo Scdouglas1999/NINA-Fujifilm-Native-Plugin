@@ -66,6 +66,13 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
 
     public double CurrentAperture => _metadata.CurrentAperture;
 
+    public string ChargingStatus => _metadata.IsCharging switch
+    {
+        true => "Yes",
+        false => "No",
+        null => "Unknown"
+    };
+
     public FujiCameraCapabilities GetCapabilitiesSnapshot()
     {
         var isoValues = GetAvailableIsoValues();
@@ -806,6 +813,8 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
             {
                 _metadata.BatteryLevel = -1;
                 _metadata.BatteryStatus = "Unavailable";
+                _metadata.IsCharging = null;
+                RaisePropertyChanged(nameof(ChargingStatus));
                 _diagnostics.RecordEvent("Camera", "This camera did not accept any known battery query layout; battery reporting is unavailable.");
                 return;
             }
@@ -824,6 +833,8 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
 
             if (result == FujifilmSdkWrapper.XSDK_COMPLETE)
             {
+                var previousChargingState = _metadata.IsCharging;
+                _metadata.IsCharging = FujifilmBatteryProtocol.GetChargingState(bodyBatteryInfo);
                 // Prefer the ratio (0-100%) if available, otherwise use the status code
                 int batteryLevel;
                 if (bodyBatteryRatio >= 0 && bodyBatteryRatio <= 100)
@@ -843,7 +854,12 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
                     _ => "Critical"
                 };
 
-                _diagnostics.RecordEvent("Camera", $"Battery: {_metadata.BatteryLevel}% ({_metadata.BatteryStatus})");
+                if (previousChargingState != _metadata.IsCharging)
+                {
+                    RaisePropertyChanged(nameof(ChargingStatus));
+                }
+
+                _diagnostics.RecordEvent("Camera", $"Battery: {_metadata.BatteryLevel}% ({_metadata.BatteryStatus}), charging={ChargingStatus}");
             }
             else
             {
@@ -912,6 +928,7 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
                 _metadata.LensProductName = lensInfo.strProductName?.Trim() ?? string.Empty;
                 _metadata.LensSerialNumber = lensInfo.strSerialNo?.Trim() ?? string.Empty;
                 _metadata.LensModel = lensInfo.strModel?.Trim() ?? string.Empty;
+                _metadata.LensVendor = FujifilmLensVendorCatalog.Resolve(_metadata.LensModel, _metadata.LensProductName);
                 _metadata.HasImageStabilization = lensInfo.lISCapability != 0;
                 _metadata.HasManualFocus = lensInfo.lMFCapability != 0;
                 _metadata.IsZoomLens = lensInfo.lZoomPosCapability != 0;

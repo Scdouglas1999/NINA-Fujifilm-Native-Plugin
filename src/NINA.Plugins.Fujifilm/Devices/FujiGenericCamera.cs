@@ -98,7 +98,10 @@ internal sealed class FujiGenericCamera : ICamera
 
             // Get lens info from the camera's capabilities
             var caps = GetCapabilitiesSnapshot();
-            var newLensInfo = caps?.Metadata?.LensProductName ?? string.Empty;
+            var metadata = caps?.Metadata;
+            var newLensInfo = metadata == null || string.IsNullOrWhiteSpace(metadata.LensProductName)
+                ? string.Empty
+                : FujifilmLensVendorCatalog.FormatDisplayName(metadata);
             if (newLensInfo != _lensInfo)
             {
                 _lensInfo = newLensInfo;

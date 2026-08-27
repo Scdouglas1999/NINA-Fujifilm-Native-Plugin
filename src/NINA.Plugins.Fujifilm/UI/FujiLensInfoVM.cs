@@ -6,6 +6,8 @@ using NINA.Equipment.Interfaces.ViewModel;
 using NINA.Plugins.Fujifilm.Devices;
 using NINA.Profile.Interfaces;
 using NINA.WPF.Base.ViewModel;
+using System.Windows;
+using System.Windows.Media;
 
 namespace NINA.Plugins.Fujifilm.UI;
 
@@ -23,6 +25,7 @@ public class FujiLensInfoVM : DockableVM
     private double _selectedAperture;
     private bool _canControlAperture;
     private string _apertureError = string.Empty;
+    private string _chargingText = "Unknown";
     private bool _refreshing;
 
     public string LensText
@@ -55,6 +58,12 @@ public class FujiLensInfoVM : DockableVM
         private set { _apertureError = value; RaisePropertyChanged(); }
     }
 
+    public string ChargingText
+    {
+        get => _chargingText;
+        private set { _chargingText = value; RaisePropertyChanged(); }
+    }
+
     public double SelectedAperture
     {
         get => _selectedAperture;
@@ -85,6 +94,15 @@ public class FujiLensInfoVM : DockableVM
         _camera = camera;
         Title = "Fuji Lens";
 
+        var resources = new ResourceDictionary
+        {
+            Source = new Uri(
+                "/NINA.Plugins.Fujifilm;component/UI/LensInfoResources.xaml",
+                UriKind.Relative)
+        };
+        ImageGeometry = (GeometryGroup)resources["NINA.Plugins.Fujifilm_FujiLensSVG"];
+        ImageGeometry.Freeze();
+
         // Subscribe to camera connection changes
         _camera.PropertyChanged += OnCameraPropertyChanged;
 
@@ -99,7 +117,8 @@ public class FujiLensInfoVM : DockableVM
         if (e.PropertyName == nameof(FujiCamera.IsConnected) ||
             e.PropertyName == nameof(FujiCamera.AvailableApertures) ||
             e.PropertyName == nameof(FujiCamera.CurrentAperture) ||
-            e.PropertyName == nameof(FujiCamera.SupportsApertureControl))
+            e.PropertyName == nameof(FujiCamera.SupportsApertureControl) ||
+            e.PropertyName == nameof(FujiCamera.ChargingStatus))
         {
             RefreshLensInfo();
         }
@@ -116,6 +135,7 @@ public class FujiLensInfoVM : DockableVM
                 AvailableApertures = Array.Empty<double>();
                 CanControlAperture = false;
                 ApertureError = string.Empty;
+                ChargingText = "Unknown";
                 return;
             }
 
@@ -126,13 +146,14 @@ public class FujiLensInfoVM : DockableVM
 
             if (!string.IsNullOrWhiteSpace(meta.LensProductName))
             {
-                var ois = meta.HasImageStabilization ? " [OIS]" : "";
-                LensText = $"{meta.LensProductName}{ois}";
+                LensText = FujifilmLensVendorCatalog.FormatDisplayName(meta);
             }
             else
             {
                 LensText = "No lens detected";
             }
+
+            ChargingText = _camera.ChargingStatus;
 
             _refreshing = true;
             try

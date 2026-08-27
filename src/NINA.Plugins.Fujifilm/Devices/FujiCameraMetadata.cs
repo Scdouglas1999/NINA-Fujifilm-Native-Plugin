@@ -13,11 +13,13 @@ public sealed class FujiCameraMetadata
     // Battery info
     public int BatteryLevel { get; set; }  // 0-100 percentage
     public string BatteryStatus { get; set; } = string.Empty;  // "OK", "Low", "Critical"
+    public bool? IsCharging { get; set; }
 
     // Lens info (basic - from XSDK_GetLensInfo)
     public string LensProductName { get; set; } = string.Empty;
     public string LensSerialNumber { get; set; } = string.Empty;
     public string LensModel { get; set; } = string.Empty;
+    public string LensVendor { get; set; } = string.Empty;
 
     // Lens capabilities (from XSDK_LensInformation)
     public bool HasImageStabilization { get; set; }
@@ -44,9 +46,11 @@ public sealed class FujiCameraMetadata
             DynamicRangeCode = DynamicRangeCode,
             BatteryLevel = BatteryLevel,
             BatteryStatus = BatteryStatus,
+            IsCharging = IsCharging,
             LensProductName = LensProductName,
             LensSerialNumber = LensSerialNumber,
             LensModel = LensModel,
+            LensVendor = LensVendor,
             HasImageStabilization = HasImageStabilization,
             HasManualFocus = HasManualFocus,
             IsZoomLens = IsZoomLens,

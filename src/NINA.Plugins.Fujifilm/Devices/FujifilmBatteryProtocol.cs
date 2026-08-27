@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using NINA.Plugins.Fujifilm.Interop;
 
 namespace NINA.Plugins.Fujifilm.Devices;
 
@@ -27,6 +28,33 @@ internal static class FujifilmBatteryProtocol
 {
     internal const int OldModelParameterCount = 6;
     internal const int NewModelParameterCount = 8;
+
+    internal static bool? GetChargingState(int statusCode)
+    {
+        if (statusCode == FujifilmSdkWrapper.SDK_POWERCAPACITY_DC_CHARGE)
+        {
+            return true;
+        }
+
+        return statusCode switch
+        {
+            FujifilmSdkWrapper.SDK_POWERCAPACITY_EMPTY or
+            FujifilmSdkWrapper.SDK_POWERCAPACITY_END or
+            FujifilmSdkWrapper.SDK_POWERCAPACITY_PREEND or
+            FujifilmSdkWrapper.SDK_POWERCAPACITY_HALF or
+            FujifilmSdkWrapper.SDK_POWERCAPACITY_FULL or
+            FujifilmSdkWrapper.SDK_POWERCAPACITY_HIGH or
+            FujifilmSdkWrapper.SDK_POWERCAPACITY_PREEND5 or
+            FujifilmSdkWrapper.SDK_POWERCAPACITY_20 or
+            FujifilmSdkWrapper.SDK_POWERCAPACITY_40 or
+            FujifilmSdkWrapper.SDK_POWERCAPACITY_60 or
+            FujifilmSdkWrapper.SDK_POWERCAPACITY_80 or
+            FujifilmSdkWrapper.SDK_POWERCAPACITY_100 or
+            FujifilmSdkWrapper.SDK_POWERCAPACITY_FULL_CHARGE or
+            FujifilmSdkWrapper.SDK_POWERCAPACITY_DC => false,
+            _ => null
+        };
+    }
 
     /// <summary>Counts to try, largest first.</summary>
     internal static readonly IReadOnlyList<int> CandidateParameterCounts =
