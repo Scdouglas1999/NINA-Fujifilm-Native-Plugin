@@ -29,6 +29,7 @@
     <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Interop\FujifilmSdkWrapper.cs" Link="Source\FujifilmSdkWrapper.cs" />
     <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Devices\FujiCaptureQualityPlan.cs" Link="Source\FujiCaptureQualityPlan.cs" />
     <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Devices\FujifilmBatteryProtocol.cs" Link="Source\FujifilmBatteryProtocol.cs" />
+    <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Devices\FujiExposureCompletion.cs" Link="Source\FujiExposureCompletion.cs" />
     <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Devices\LiveView\LiveViewEnums.cs" Link="Source\LiveViewEnums.cs" />
     <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Devices\LiveView\LiveViewZoomLevels.cs" Link="Source\LiveViewZoomLevels.cs" />
     <Compile Include="..\..\src\NINA.Plugins.Fujifilm\Imaging\FujiMetadataValueParser.cs" Link="Source\FujiMetadataValueParser.cs" />

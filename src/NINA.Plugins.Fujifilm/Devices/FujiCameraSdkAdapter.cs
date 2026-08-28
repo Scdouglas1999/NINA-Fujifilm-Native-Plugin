@@ -518,7 +518,12 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
     {
         lock (_sync)
         {
-            return _imageReady;
+            // GenericCamera polls this method before it calls GetExposure. A failed capture is
+            // terminal too: GetExposure will observe the faulted capture task and the Fujifilm
+            // wrapper can then surface LastExposureError. Returning false for Error makes NINA
+            // wait for its outer camera timeout even though the SDK operation has already failed,
+            // replacing the actionable error with "Camera did not set image as ready".
+            return FujiExposureCompletion.IsTerminal(_imageReady, _cameraState);
         }
     }
 
@@ -874,13 +879,4 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
 
         return result;
     }
-}
-
-internal enum FujiCameraExposureState
-{
-    Idle,
-    Exposing,
-    Downloading,
-    Ready,
-    Error
 }
