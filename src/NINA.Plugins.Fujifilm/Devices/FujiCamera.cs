@@ -941,20 +941,28 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
                 _diagnostics.RecordEvent("Camera", $"XSDK_GetLensInfo FAILED: result={lensInfoResult}, ApiCode=0x{error.ApiCode:X}, ErrCode=0x{error.ErrorCode:X}. No lens detected or lens detection not supported.");
             }
 
-            // CapAperture requires the SDK's lens-position token even for some prime lenses.
+            // CapAperture requires the SDK's lens-position token even when LensInfo says that
+            // zoom-position capability is unavailable. Viltrox AF 27/1.2 reports Zoom=False
+            // with token 1, while Fujinon XF18-135 reports Zoom=False but changes its token as
+            // the lens is zoomed. Treat the returned token, rather than the capability flag, as
+            // authoritative for aperture enumeration.
+            var previousApertureZoomPosition = _metadata.CurrentZoomPosition;
+            var apertureZoomPositionChanged = false;
             // Viltrox AF 27/1.2 reports Zoom=False but returns token 1; passing the assumed prime
             // value 0 makes the otherwise-supported capability call fail.
             if (FujifilmSdkWrapper.XSDK_GetLensZoomPos(_session.Handle, out var apertureZoomPosition) ==
                 FujifilmSdkWrapper.XSDK_COMPLETE)
             {
+                apertureZoomPositionChanged = apertureZoomPosition != previousApertureZoomPosition;
                 _metadata.CurrentZoomPosition = apertureZoomPosition;
                 _diagnostics.RecordEvent("Camera",
                     $"Aperture capability lens-position token: {apertureZoomPosition} (Zoom={_metadata.IsZoomLens}).");
             }
 
-            // Prime-lens choices are stable for the attached lens. Avoid repeatedly toggling AE
-            // mode on periodic metadata refreshes once they have been discovered.
-            if (_metadata.IsZoomLens || _supportedApertureValues.Count == 0)
+            // Avoid repeatedly querying stable lenses, but refresh whenever the actual token
+            // changes. Do not rely on lZoomPosCapability: some Fujinon zoom lenses report it as
+            // false even though XSDK_GetLensZoomPos succeeds and changes with focal length.
+            if (apertureZoomPositionChanged || _supportedApertureValues.Count == 0)
             {
                 _supportedApertureValues = QueryApertureValues(_metadata.CurrentZoomPosition);
             }
