@@ -222,7 +222,7 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
             {
                 lock (_sync)
                 {
-                    if (_cameraState != FujiCameraExposureState.Idle)
+                    if (!FujiExposureCompletion.IsQuiescent(_cameraState))
                     {
                         throw new InvalidOperationException(
                             "Aperture cannot be changed while an exposure or image download is in progress.");
@@ -437,6 +437,15 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
         try
         {
             raw = await captureTask.ConfigureAwait(false);
+        }
+        catch
+        {
+            // The capture task's continuation has already recorded LastExposureError. Leave the
+            // adapter in Error rather than Downloading: Downloading is a busy state, and staying
+            // there after the failure blocked status refreshes and aperture commands until the
+            // next exposure started.
+            _cameraState = FujiCameraExposureState.Error;
+            throw;
         }
         finally
         {
@@ -800,7 +809,7 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
 
         lock (_sync)
         {
-            if (_cameraState == FujiCameraExposureState.Idle && !_liveViewActive &&
+            if (FujiExposureCompletion.IsQuiescent(_cameraState) && !_liveViewActive &&
                 DateTime.UtcNow - _lastStatusRefreshUtc >= TimeSpan.FromSeconds(15))
             {
                 _capabilities = _camera.RefreshCapabilitiesSnapshot();

@@ -37,3 +37,29 @@ public sealed class FujiExposureCompletionTests
             FujiCameraExposureState.Error));
     }
 }
+
+public sealed class FujiExposureQuiescenceTests
+{
+    [Fact]
+    public void IsQuiescent_WhenNothingIsInFlight_ReturnsTrue()
+    {
+        Assert.True(FujiExposureCompletion.IsQuiescent(FujiCameraExposureState.Idle));
+        Assert.True(FujiExposureCompletion.IsQuiescent(FujiCameraExposureState.Error));
+    }
+
+    [Fact]
+    public void IsQuiescent_WhileExposureOrImageIsPending_ReturnsFalse()
+    {
+        var busyStates = new[]
+        {
+            FujiCameraExposureState.Exposing,
+            FujiCameraExposureState.Downloading,
+            FujiCameraExposureState.Ready
+        };
+
+        foreach (var state in busyStates)
+        {
+            Assert.False(FujiExposureCompletion.IsQuiescent(state));
+        }
+    }
+}
