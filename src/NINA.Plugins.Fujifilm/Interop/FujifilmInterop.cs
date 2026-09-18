@@ -22,7 +22,9 @@ public sealed class FujifilmInterop : IFujifilmInterop
     private static readonly SemaphoreSlim _globalLock = new(1, 1);
     private static readonly SemaphoreSlim _detectionLock = new(1, 1); // Serialize detection operations
     private static bool _isSdkInitializedGlobally;
-    private readonly Dictionary<string, FujifilmCameraInfo> _knownCameras =
+    // Detection is serialized by _detectionLock; descriptors must be shared because sessions
+    // and their interop callers are process-wide.
+    private static readonly Dictionary<string, FujifilmCameraInfo> _knownCameras =
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
