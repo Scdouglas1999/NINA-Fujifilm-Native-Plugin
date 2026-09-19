@@ -53,6 +53,14 @@ public sealed class FujiCameraFactory : IFujiCameraFactory
 
     public async Task<IReadOnlyList<FujifilmCameraDescriptor>> GetAvailableCamerasAsync(CancellationToken cancellationToken)
     {
+        // The Shooting SDK does not safely support rediscovery/device-info queries while a
+        // camera handle is active. Reuse the original discovery descriptor for
+        // equipment refreshes (including the Fujifilm focuser chooser).
+        if (_camera.ConnectedDescriptor is { } connectedDescriptor)
+        {
+            return new[] { connectedDescriptor };
+        }
+
         var cameras = await _interop.DetectCamerasAsync(cancellationToken).ConfigureAwait(false);
         var descriptors = new List<FujifilmCameraDescriptor>();
 

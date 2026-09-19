@@ -6,6 +6,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NINA.Plugins.Fujifilm", "sr
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NINA.Plugins.Fujifilm.Tests", "tests\NINA.Plugins.Fujifilm.Tests\NINA.Plugins.Fujifilm.Tests.csproj", "{D92B7578-6B9A-46F8-97A9-CBEDB43AD318}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NINA.Plugins.Fujifilm.Windows.Tests", "tests\NINA.Plugins.Fujifilm.Windows.Tests\NINA.Plugins.Fujifilm.Windows.Tests.csproj", "{B6AFCC0B-3EAB-42DD-BB1B-E7BF7A665C55}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -20,6 +22,10 @@ Global
 		{D92B7578-6B9A-46F8-97A9-CBEDB43AD318}.Debug|x64.Build.0 = Debug|Any CPU
 		{D92B7578-6B9A-46F8-97A9-CBEDB43AD318}.Release|x64.ActiveCfg = Release|Any CPU
 		{D92B7578-6B9A-46F8-97A9-CBEDB43AD318}.Release|x64.Build.0 = Release|Any CPU
+		{B6AFCC0B-3EAB-42DD-BB1B-E7BF7A665C55}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{B6AFCC0B-3EAB-42DD-BB1B-E7BF7A665C55}.Debug|x64.Build.0 = Debug|Any CPU
+		{B6AFCC0B-3EAB-42DD-BB1B-E7BF7A665C55}.Release|x64.ActiveCfg = Release|Any CPU
+		{B6AFCC0B-3EAB-42DD-BB1B-E7BF7A665C55}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
