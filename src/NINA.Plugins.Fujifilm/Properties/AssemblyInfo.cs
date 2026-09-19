@@ -22,4 +22,5 @@ using System.Runtime.Versioning;
 [assembly: AssemblyVersion("3.2.0.0")]
 [assembly: AssemblyFileVersion("3.2.0.0")]
 [assembly: InternalsVisibleTo("NINA.Plugins.Fujifilm.Tests")]
+[assembly: InternalsVisibleTo("NINA.Plugins.Fujifilm.Windows.Tests")]
 [assembly: SupportedOSPlatform("windows")]

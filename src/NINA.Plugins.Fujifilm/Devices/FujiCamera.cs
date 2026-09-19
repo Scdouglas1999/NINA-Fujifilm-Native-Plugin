@@ -52,7 +52,7 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
     private int _lastApiErrorCode;
     private int _lastSdkErrorCode;
     private int _bulbReleaseHeld;
-    private string? _connectedDeviceId;
+    private FujifilmCameraDescriptor? _connectedDescriptor;
     private FujiCameraMetadata _metadata = FujiCameraMetadata.Empty;
 
     public bool SupportsBulb => _bulbCapable;
@@ -262,7 +262,8 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
     }
 
     public bool IsConnected => _session != null && _session.Handle != IntPtr.Zero;
-    internal string? ConnectedDeviceId => IsConnected ? _connectedDeviceId : null;
+    internal FujifilmCameraDescriptor? ConnectedDescriptor => IsConnected ? _connectedDescriptor : null;
+    internal string? ConnectedDeviceId => ConnectedDescriptor?.DeviceId;
 
     /// <summary>
     /// Gets the native SDK session handle. Returns IntPtr.Zero if not connected.
@@ -326,8 +327,11 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
             await DisconnectAsync().ConfigureAwait(false);
         }
 
-        _session = await _interop.OpenCameraAsync(descriptor.DeviceId, cancellationToken).ConfigureAwait(false);
-        _connectedDeviceId = descriptor.DeviceId;
+        var session = await _interop.OpenCameraAsync(descriptor.DeviceId, cancellationToken).ConfigureAwait(false);
+        // Publish the discovered identity before IsConnected becomes true. Metadata is loaded
+        // later and may be empty or still describe the previous camera during equipment refresh.
+        _connectedDescriptor = descriptor;
+        _session = session;
         _diagnostics.RecordEvent("Camera", $"Opened handle {_session.Handle} for {descriptor.DeviceId}");
 
         try
@@ -411,7 +415,7 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
         {
             var failedSession = _session;
             _session = null;
-            _connectedDeviceId = null;
+            _connectedDescriptor = null;
             _config = null;
             if (failedSession != null)
             {
@@ -1953,7 +1957,7 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
             _diagnostics.RecordEvent("Camera", $"Closing camera session {_session.Handle}");
             await _interop.CloseCameraAsync(_session).ConfigureAwait(false);
             _session = null;
-            _connectedDeviceId = null;
+            _connectedDescriptor = null;
             _config = null;
             _supportedSensitivities = Array.Empty<int>();
             _shutterCodeToDuration = new Dictionary<int, double>();

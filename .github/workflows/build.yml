@@ -18,4 +18,4 @@ jobs:
           dotnet-version: 8.0.x
       - run: dotnet restore NINA.Plugins.Fujifilm.sln
       - run: dotnet build NINA.Plugins.Fujifilm.sln --configuration Release --no-restore
-      - run: dotnet test tests/NINA.Plugins.Fujifilm.Tests/NINA.Plugins.Fujifilm.Tests.csproj --configuration Release --no-build
+      - run: dotnet test NINA.Plugins.Fujifilm.sln --configuration Release --no-build
