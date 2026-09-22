@@ -1,69 +1,73 @@
 # 3.2.2.0
 
-## Every download returned the previous exposure
+## The camera was handing back the previous image
 
-Reported by a GFX100 II user with a full night of logs, closing the "first image after a slew
-shows the old field" problem.
+If you use Slew & Center or automatic meridian flips, update. This one matters.
 
-The symptom was subtle. Normal imaging looked fine, but the first exposure after any large mount
-movement plate-solved to the field the mount had just left. With Slew & Center that produced a
-large, wrong correction. After an automatic meridian flip it was unmistakable: the first
-post-flip 2 s centering frame solved with the pre-flip position angle (140.7°) while every later
-frame solved at 321.4°, and the recenter routine chased the lagged solves until it gave up after
-ten attempts.
+A GFX100 II user emailed me about something odd: the first image after a big mount move plate-solved
+to where the mount used to be, not where it had just gone. With Slew & Center that produced a large
+correction in the wrong direction. After an automatic meridian flip it was impossible to miss. The
+first frame after the flip solved at the old position angle of 140.7°, and every frame after that
+solved at 321.4°, the 180° flip you would expect. N.I.N.A. trusted the bad solve, chased it through
+ten slew attempts, and gave up on centering.
 
-The N.I.N.A. log proved the frame was not merely old but a different exposure. Lossless RAF size
-tracks image content, and the plugin logs the size and sampled statistics of every frame:
+He sent a full night of logs, and they showed something worse than an occasional stale frame. Every
+download that night handed back the image from the previous exposure.
 
-| Requested | Bytes downloaded | Sampled mean | Sampled max |
-| --- | --- | --- | --- |
-| Last 60 s light before the flip | 75,789,744 | 308.9 | 65,280 |
-| First "2 s" frame after the flip | 75,790,896 | 308.7 | 65,255 |
-| Every later 2 s centering frame | ~55,000,000 | ~260 | < 21,000 |
-| First "60 s" light after centering | 55,994,112 | 259.3 | 1,241 |
+You can see it because a lossless RAF changes size with what is in it, and the plugin logs the size
+and average brightness of every frame it downloads. Just before the flip, N.I.N.A. asked for a
+2 second frame to centre with. What came back was 75.8 MB averaging 309 ADU, which is a dead match
+for the 60 second light taken immediately before it, and nothing like the 55 MB and 260 ADU of the
+2 second frames that followed. The same swap turns up at all nine points that night where the
+exposure length changed, from the first frame of the session to the last.
 
-The same swap appears at all nine exposure-length changes in that log, from the first frame of
-the session to the last. Every download, all night, returned the frame captured by the previous
-trigger.
+This one is mine, not N.I.N.A.'s and not Fujifilm's. The plugin fires the shutter, waits out the
+exposure, then reads whatever image is sitting at the front of the camera's internal buffer. That
+buffer is first in, first out, and nothing ever checked it was empty before firing. His log shows
+one image already in there the moment the camera connected. The line reads `Buffer capacity: 1/33`,
+and that first number is how many pictures the camera is holding, not how much room is left. One
+stray image in the buffer and every download after it is one behind, all night.
 
-The cause is in the plugin, not N.I.N.A., the SDK or the camera. `CaptureRawAsync` fires the
-trigger, waits the exposure length, then reads whatever frame is at the head of the camera's
-buffer. The buffer is first-in first-out and nothing ever checked it was empty before the trigger.
-The connect log for that session reported one captured frame already sitting in the buffer
-(`Buffer capacity: 1/33`; the SDK defines that first value as the number of frames the camera is
-holding), so from the first exposure onward every download was one frame behind. With media
-recording set to OFF, a shutter press on the body or an exposure a previous session never
-collected is enough to leave that frame there, and until now only a cancelled exposure ever
-cleared it.
+It does not take much to leave one there. Press the shutter on the body while the plugin has card
+recording switched off, or close N.I.N.A. without collecting the last frame, and it sits in the
+buffer waiting for someone to read it. Until now the only thing that ever cleared it was cancelling
+an exposure.
 
-- **The buffer is drained on connect.** Any frame the camera is holding when the session opens is
-  deleted and logged as `Camera buffer holds N frame(s) of M on connect; discarding them.`
-- **The buffer is drained before every trigger.** Whatever is in the buffer when an exposure
-  starts cannot be that exposure's frame.
-- **The buffer is checked after every download.** If frames remain once the exposure's own frame
-  has been read, they are discarded with a warning, so a body that produces more than one frame
-  per trigger cannot re-introduce the lag.
-- **The connect log line now says what it means.** `Camera buffer: N frame(s) pending of M`
-  replaces the ambiguous `Buffer capacity: N/M`.
+What has changed:
 
-For anyone who imaged with an affected session: every saved frame is genuine, but each was
-captured one exposure earlier than its header claims, and the first frame after each change of
-exposure length has the previous length. In the reported session two "60 s" lights are really 2 s
-frames. Check the first light after any framing, centering or flip.
+- The buffer is emptied when the camera connects. Anything the body was still holding gets thrown
+  away, and the log says how many frames that was.
+- It is emptied again right before every shutter release, so whatever is in there cannot be mistaken
+  for the frame you are about to take.
+- It is checked once more after every download. If anything is left, it gets dropped with a warning
+  in the log instead of being handed to the next exposure.
+- The connect line now reads `Camera buffer: 1 frame(s) pending of 33`. The old wording looked like
+  free space, which it never was.
+
+### If you imaged on an earlier version
+
+Your frames are all real images. Each one is just an exposure older than its filename says. Where it
+actually bites is the first frame after you change exposure length, because that one has the old
+length. In the session I was sent, two files saved as 60 second lights are really 2 second frames:
+the first light after framing, and the first light after the flip. Worth checking the first sub
+after any framing, centering or flip run.
 
 ## Testing
 
-No Fujifilm hardware was attached for this release. The fix is verified against the reporter's
-log, which shows the stale frame present at connect and the one-frame lag at every exposure-length
-change, and against the SDK reference for `XSDK_GetBufferCapacity` (4.1.8.5), `XSDK_ReadImage` and
-`XSDK_DeleteImage`. The drain path itself is the one 3.1.0.0 introduced for cancelled exposures,
-now also run on connect, before each trigger and after each download. The existing test suite
-passes on Windows CI. The reporter's proposed check, a plain slew between two fields followed by
-two consecutive exposures, is the confirmation to run on hardware: with this release both solve to
-the new field.
+Windows CI is green on the existing test suite.
+
+The fix itself is verified against that night's log, where you can see the stale frame present at
+connect and the one frame lag at every change of exposure length, and against the Fujifilm SDK
+reference for the buffer, read and delete calls. The draining code is not new. It is what the plugin
+already used after a cancelled exposure, now run in the three places that actually needed it.
+
+No camera was attached for this release, so the real confirmation has to happen on hardware, and the
+test the reporter suggested is the right one: solve a field, slew somewhere else, take two frames
+back to back without letting anything sync or correct, and solve both. On this release both should
+come back as the new field.
 
 ## Upgrading
 
-Nothing to reconfigure. Install over 3.2.1.0 with the installer, or replace the plugin folder
-contents with the manual-install zip. Close N.I.N.A. first. On the first connection after
-upgrading, expect a log line reporting how many stale frames were discarded.
+Nothing to reconfigure. Install over 3.2.1.0, or drop the manual-install zip over your plugin
+folder. Close N.I.N.A. first. The first time you connect after updating you may see a line about
+discarding a stale frame, which is the fix doing its job.
