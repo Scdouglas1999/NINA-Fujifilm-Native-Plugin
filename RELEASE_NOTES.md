@@ -1,58 +1,69 @@
-# 3.2.1.0
+# 3.2.2.0
 
-## Equipment refresh no longer crashes N.I.N.A.
+## Every download returned the previous exposure
 
-Contributed by Roman Malizderskyi (@roma-derski), closing the X-T4 equipment refresh crash.
+Reported by a GFX100 II user with a full night of logs, closing the "first image after a slew
+shows the old field" problem.
 
-Scanning for equipment while a Fujifilm camera was connected could terminate N.I.N.A. outright -
-not an error dialog, not a disconnected camera, the process gone. Discovery called
-`XSDK_GetDeviceInfoEx` on the live session handle to describe the camera it already had open, and
-the native SDK can access-violate when that query races other operations on an active session. The
-contributor's crash was recorded on N.I.N.A. 3.2.0.9001 with plugin 3.1.2.0 and an X-T4: the
-N.I.N.A. log ends on `ENUM:0 is already connected; describing it from the open session instead of
-reopening.`, and Windows logged `NINA.exe terminated due to an unhandled
-System.AccessViolationException` inside `XSDK_GetDeviceInfoEx`, exception code `0xc0000005`.
+The symptom was subtle. Normal imaging looked fine, but the first exposure after any large mount
+movement plate-solved to the field the mount had just left. With Slew & Center that produced a
+large, wrong correction. After an automatic meridian flip it was unmistakable: the first
+post-flip 2 s centering frame solved with the pre-flip position angle (140.7°) while every later
+frame solved at 321.4°, and the recenter routine chased the lagged solves until it gave up after
+ten attempts.
 
-The fix removes that query entirely. Identity is now recorded during the discovery that precedes
-connection and reused afterwards, so nothing calls device-info APIs on a handle that is in use.
+The N.I.N.A. log proved the frame was not merely old but a different exposure. Lossless RAF size
+tracks image content, and the plugin logs the size and sampled statistics of every frame:
 
-- **Discovery never inspects a live session.** A connected camera is described from the descriptor
-  captured before it was opened. If no cached descriptor exists, the device is skipped and the
-  reason logged, rather than inspected unsafely.
-- **The descriptor cache is process-wide.** 3.1.2.0 established that several `FujifilmInterop`
-  instances coexist in one N.I.N.A. session, so a per-instance cache would miss. The cache is
-  static and keyed by device id.
-- **Equipment refresh reuses the connected camera's own descriptor.** While a camera is connected,
-  the camera factory returns the descriptor discovery produced, including for the Fujifilm focuser
-  chooser. The camera does not appear to vanish and is not re-enumerated underneath an open
-  session.
+| Requested | Bytes downloaded | Sampled mean | Sampled max |
+| --- | --- | --- | --- |
+| Last 60 s light before the flip | 75,789,744 | 308.9 | 65,280 |
+| First "2 s" frame after the flip | 75,790,896 | 308.7 | 65,255 |
+| Every later 2 s centering frame | ~55,000,000 | ~260 | < 21,000 |
+| First "60 s" light after centering | 55,994,112 | 259.3 | 1,241 |
 
-Worth noting for anyone who hit this on 3.1.2.0: that release introduced the device-info query to
-stop an equipment rescan from making a connected camera disappear. It fixed the disappearance and
-traded it for this crash. Both are now handled the same way, by never touching the SDK for
-information already known.
+The same swap appears at all nine exposure-length changes in that log, from the first frame of
+the session to the last. Every download, all night, returned the frame captured by the previous
+trigger.
 
-## The right camera identity survives a refresh
+The cause is in the plugin, not N.I.N.A., the SDK or the camera. `CaptureRawAsync` fires the
+trigger, waits the exposure length, then reads whatever frame is at the head of the camera's
+buffer. The buffer is first-in first-out and nothing ever checked it was empty before the trigger.
+The connect log for that session reported one captured frame already sitting in the buffer
+(`Buffer capacity: 1/33`; the SDK defines that first value as the number of frames the camera is
+holding), so from the first exposure onward every download was one frame behind. With media
+recording set to OFF, a shutter press on the body or an exposure a previous session never
+collected is enough to leave that frame there, and until now only a cancelled exposure ever
+cleared it.
 
-A follow-up fix from the maintainer. The connection descriptor is now stored before the session is
-published, so `IsConnected` never becomes true while the plugin would answer with an empty name or
-with the previous camera's. Connection metadata loads after the handle opens, and a refresh landing
-in that window used to report whatever metadata still held - which on reconnect could select the
-wrong sensor configuration for the body actually attached.
+- **The buffer is drained on connect.** Any frame the camera is holding when the session opens is
+  deleted and logged as `Camera buffer holds N frame(s) of M on connect; discarding them.`
+- **The buffer is drained before every trigger.** Whatever is in the buffer when an exposure
+  starts cannot be that exposure's frame.
+- **The buffer is checked after every download.** If frames remain once the exposure's own frame
+  has been read, they are discarded with a warning, so a body that produces more than one frame
+  per trigger cannot re-introduce the lag.
+- **The connect log line now says what it means.** `Camera buffer: N frame(s) pending of M`
+  replaces the ambiguous `Buffer capacity: N/M`.
+
+For anyone who imaged with an affected session: every saved frame is genuine, but each was
+captured one exposure earlier than its header claims, and the first frame after each change of
+exposure length has the previous length. In the reported session two "60 s" lights are really 2 s
+frames. Check the first light after any framing, centering or flip.
 
 ## Testing
 
-193 tests pass on Windows CI: the existing 190, plus three regression cases added for this fix that
-run the real camera and factory against a fake SDK session - a refresh before metadata
-initialization, stale metadata across a body change, and discovery resuming after disconnect. The
-tests are a new Windows-only project, so CI now runs both test projects.
-
-The native crash itself is verified by the contributor's X-T4 evidence above; the maintainer has no
-Fujifilm hardware, and no camera was attached for this release. The post-fix scan on the
-contributor's X-T4 logs `ENUM:0 is already connected; reused its cached descriptor.` followed by
-`Found 1 Fujifilm Cameras`.
+No Fujifilm hardware was attached for this release. The fix is verified against the reporter's
+log, which shows the stale frame present at connect and the one-frame lag at every exposure-length
+change, and against the SDK reference for `XSDK_GetBufferCapacity` (4.1.8.5), `XSDK_ReadImage` and
+`XSDK_DeleteImage`. The drain path itself is the one 3.1.0.0 introduced for cancelled exposures,
+now also run on connect, before each trigger and after each download. The existing test suite
+passes on Windows CI. The reporter's proposed check, a plain slew between two fields followed by
+two consecutive exposures, is the confirmation to run on hardware: with this release both solve to
+the new field.
 
 ## Upgrading
 
-Nothing to reconfigure. Install over 3.2.0.0 with the installer, or replace the plugin folder
-contents with the manual-install zip. Close N.I.N.A. first.
+Nothing to reconfigure. Install over 3.2.1.0 with the installer, or replace the plugin folder
+contents with the manual-install zip. Close N.I.N.A. first. On the first connection after
+upgrading, expect a log line reporting how many stale frames were discarded.

@@ -161,7 +161,7 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
         _diagnostics.RecordEvent("Adapter", $"Connected to {_descriptor.DisplayName}");
         _diagnostics.RecordEvent("Adapter", $"Available ISO values: [{string.Join(", ", _isoValues)}]");
         _diagnostics.RecordEvent("Adapter", $"Initial ISO set to: {_currentIso}");
-        _diagnostics.RecordEvent("Adapter", $"Buffer capacity: {_capabilities.BufferShootCapacity}/{_capabilities.BufferTotalCapacity}");
+        _diagnostics.RecordEvent("Adapter", $"Camera buffer: {_capabilities.BufferShootCapacity} frame(s) pending of {_capabilities.BufferTotalCapacity}");
         _diagnostics.RecordEvent("Adapter", $"State Mode={_capabilities.ModeCode}, AE={_capabilities.AEModeCode}, DR={_capabilities.DynamicRangeCode}, LastError={_capabilities.LastSdkErrorCode} (API {_capabilities.LastApiErrorCode})");
     }
 

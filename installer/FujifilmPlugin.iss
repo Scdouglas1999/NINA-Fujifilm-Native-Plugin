@@ -7,7 +7,7 @@
 ;   ISCC.exe installer\FujifilmPlugin.iss
 
 #ifndef MyAppVersion
-#define MyAppVersion "3.2.1.0"
+#define MyAppVersion "3.2.2.0"
 #endif
 
 #define MyAppName "Fujifilm Native Camera Plugin for N.I.N.A."
@@ -49,7 +49,7 @@ VersionInfoProductVersion={#MyAppVersion}
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
-WelcomeLabel2=This will install [name/ver].%n%nThis plugin provides native camera support for Fujifilm X-series and GFX cameras in N.I.N.A. (Nighttime Imaging 'N' Astronomy).%n%nThis release fixes a crash: scanning for equipment while a Fujifilm camera was connected could terminate N.I.N.A. through an access violation in the Fujifilm SDK. Camera identity discovered before connection is now reused during a refresh instead of querying the open session.%n%nIMPORTANT: Please close N.I.N.A. before continuing.
+WelcomeLabel2=This will install [name/ver].%n%nThis plugin provides native camera support for Fujifilm X-series and GFX cameras in N.I.N.A. (Nighttime Imaging 'N' Astronomy).%n%nThis release fixes a one-frame lag: a frame left in the camera's buffer made every download return the previous exposure, so the first image after a slew or meridian flip showed the old field. The buffer is now cleared on connect, before every exposure and after every download.%n%nIMPORTANT: Please close N.I.N.A. before continuing.
 
 [Files]
 ; Copy the verified plugin publish layout exactly. The Fujifilm SDK runtime files

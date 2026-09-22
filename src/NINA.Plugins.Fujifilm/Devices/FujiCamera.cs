@@ -392,7 +392,12 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
 
         // Cache capabilities (ISO, shutter speeds) - must be done after DR is set
         CacheCapabilities();
-        RefreshBufferCapacity();
+
+        // Frames already sitting in the camera buffer (a shutter press with media recording off,
+        // an exposure a previous session never collected) would otherwise be handed to the first
+        // download as if they were the first exposure, and every frame after that would be one
+        // exposure behind. Discard them now; the drain refreshes the buffer count.
+        DrainCameraBuffer("on connect");
 
         // Initialize metadata with device info
         InitializeMetadata();
@@ -1648,6 +1653,10 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
                 "Set the physical shutter dial to T, use Manual exposure mode, and retry. The exposure was not triggered.");
         }
 
+        // The download takes whatever frame is at the head of the camera's buffer, so anything
+        // left there from before this trigger would be returned in place of this exposure.
+        DrainCameraBuffer("before triggering an exposure");
+
         if (shutterCode != FujifilmSdkWrapper.XSDK_SHUTTER_BULB)
         {
             await ExecuteTimedExposureAsync(exposureSeconds, cancellationToken).ConfigureAwait(false);
@@ -1659,7 +1668,17 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
 
         var raw = await DownloadImageAsync(cancellationToken).ConfigureAwait(false);
         var finalized = raw with { ExposureSeconds = exposureSeconds, Iso = iso, ShutterCode = shutterCode, TimestampTicks = DateTime.UtcNow.Ticks };
+
+        // One trigger should leave the buffer empty once its frame is read. Anything still there
+        // is not this exposure's and would be returned by the next one, so discard it and say so.
         RefreshBufferCapacity();
+        if (_bufferShootCapacity > 0)
+        {
+            _diagnostics.RecordEvent("Camera",
+                $"Warning: {_bufferShootCapacity} frame(s) still in the camera buffer after downloading this exposure; discarding them so the next exposure returns its own frame.");
+            DrainCameraBuffer("after downloading an exposure");
+        }
+
         RefreshOperatingState();
         return finalized;
     }
@@ -1739,9 +1758,15 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
     /// Discards any frames sitting in the camera's buffer.
     /// </summary>
     /// <remarks>
-    /// A frame left behind by an aborted or timed-out exposure is handed to the next download as if
-    /// it belonged to that exposure, so every subsequent sub-exposure in the sequence is off by one.
-    /// Cancelling a timed exposure was measured to leave exactly one such frame behind.
+    /// <see cref="DownloadImageAsync"/> reads the oldest frame in the buffer, so a frame left behind
+    /// by anything other than the exposure being collected (an aborted or timed-out exposure, a
+    /// shutter press with media recording off, an exposure a previous session never downloaded) is
+    /// handed to the next download as if it belonged to that exposure, and every frame after it is
+    /// one exposure behind. A GFX100 II session logged with 3.1.1 showed exactly that: one frame
+    /// was already in the buffer at connect, and all night every download returned the previous
+    /// exposure, which surfaced as the first plate solve after a slew or meridian flip showing the
+    /// old field. <c>XSDK_GetBufferCapacity</c>'s first value is the count of captured frames the
+    /// camera is holding (SDK reference 4.1.8.5), which is what this reads.
     /// </remarks>
     private void DrainCameraBuffer(string reason)
     {
@@ -1750,32 +1775,47 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
             return;
         }
 
-        const int maxFramesToDiscard = 8;
         var discarded = 0;
 
         try
         {
+            var capacityResult = FujifilmSdkWrapper.XSDK_GetBufferCapacity(
+                _session.Handle, out var pendingFrames, out var totalFrames);
+            if (capacityResult != FujifilmSdkWrapper.XSDK_COMPLETE)
+            {
+                _diagnostics.RecordEvent("Camera", $"Could not read the camera buffer state {reason} (result={capacityResult}); nothing discarded.");
+                return;
+            }
+
+            if (pendingFrames <= 0)
+            {
+                return;
+            }
+
+            _diagnostics.RecordEvent("Camera", $"Camera buffer holds {pendingFrames} frame(s) of {totalFrames} {reason}; discarding them.");
+
+            // Bounded by the buffer's own size so a misreported count cannot loop forever.
+            var maxFramesToDiscard = Math.Max(pendingFrames, Math.Max(totalFrames, 1));
             for (var attempt = 0; attempt < maxFramesToDiscard; attempt++)
             {
-                var capacityResult = FujifilmSdkWrapper.XSDK_GetBufferCapacity(
-                    _session.Handle, out var pendingFrames, out _);
-                if (capacityResult != FujifilmSdkWrapper.XSDK_COMPLETE || pendingFrames <= 0)
+                var deleteResult = FujifilmSdkWrapper.XSDK_DeleteImage(_session.Handle);
+                if (deleteResult != FujifilmSdkWrapper.XSDK_COMPLETE)
                 {
-                    break;
-                }
-
-                if (FujifilmSdkWrapper.XSDK_DeleteImage(_session.Handle) != FujifilmSdkWrapper.XSDK_COMPLETE)
-                {
+                    _diagnostics.RecordEvent("Camera", $"XSDK_DeleteImage returned {deleteResult} while draining the buffer {reason}; {discarded} frame(s) discarded so far.");
                     break;
                 }
 
                 discarded++;
+
+                capacityResult = FujifilmSdkWrapper.XSDK_GetBufferCapacity(
+                    _session.Handle, out pendingFrames, out _);
+                if (capacityResult != FujifilmSdkWrapper.XSDK_COMPLETE || pendingFrames <= 0)
+                {
+                    break;
+                }
             }
 
-            if (discarded > 0)
-            {
-                _diagnostics.RecordEvent("Camera", $"Discarded {discarded} stale frame(s) from the camera buffer {reason}.");
-            }
+            _diagnostics.RecordEvent("Camera", $"Discarded {discarded} stale frame(s) from the camera buffer {reason}.");
         }
         catch (Exception ex)
         {
