@@ -1477,6 +1477,7 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
 
     public async Task<RawCaptureResult> CaptureRawAsync(double exposureSeconds, int iso, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (_session == null || _session.Handle == IntPtr.Zero)
         {
             throw new InvalidOperationException("Camera is not connected.");
@@ -1657,16 +1658,18 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
         // left there from before this trigger would be returned in place of this exposure.
         DrainCameraBuffer("before triggering an exposure");
 
+        cancellationToken.ThrowIfCancellationRequested();
+        RawCaptureResult raw;
         if (shutterCode != FujifilmSdkWrapper.XSDK_SHUTTER_BULB)
         {
-            await ExecuteTimedExposureAsync(exposureSeconds, cancellationToken).ConfigureAwait(false);
+            raw = await ExecuteTimedExposureAsync(exposureSeconds, cancellationToken).ConfigureAwait(false);
         }
         else
         {
             await ExecuteBulbExposureAsync(exposureSeconds, cancellationToken).ConfigureAwait(false);
+            raw = await DownloadImageAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        var raw = await DownloadImageAsync(cancellationToken).ConfigureAwait(false);
         var finalized = raw with { ExposureSeconds = exposureSeconds, Iso = iso, ShutterCode = shutterCode, TimestampTicks = DateTime.UtcNow.Ticks };
 
         // One trigger should leave the buffer empty once its frame is read. Anything still there
@@ -1827,17 +1830,20 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
         }
     }
 
-    private async Task ExecuteTimedExposureAsync(double exposureSeconds, CancellationToken cancellationToken)
+    private async Task<RawCaptureResult> ExecuteTimedExposureAsync(double exposureSeconds, CancellationToken cancellationToken)
     {
         if (_session == null)
         {
-            return;
+            throw new InvalidOperationException("Camera session not available.");
         }
 
-        await FujifilmTimedRelease.TriggerAsync(IssueReleaseCommand, cancellationToken,
+        return await FujifilmTimedRelease.CaptureAsync(IssueReleaseCommand, async () =>
+        {
+            var extra = TimeSpan.FromSeconds(Math.Max(1.0, Math.Min(5.0, exposureSeconds * 0.2)));
+            await Task.Delay(TimeSpan.FromSeconds(exposureSeconds) + extra, cancellationToken).ConfigureAwait(false);
+            return await DownloadImageAsync(cancellationToken).ConfigureAwait(false);
+        }, StopExposureAsync, cancellationToken,
             message => _diagnostics.RecordEvent("Camera", message)).ConfigureAwait(false);
-        var extra = TimeSpan.FromSeconds(Math.Max(1.0, Math.Min(5.0, exposureSeconds * 0.2)));
-        await Task.Delay(TimeSpan.FromSeconds(exposureSeconds) + extra, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task ExecuteBulbExposureAsync(double exposureSeconds, CancellationToken cancellationToken)

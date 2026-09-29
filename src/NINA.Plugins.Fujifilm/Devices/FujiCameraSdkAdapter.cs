@@ -846,15 +846,6 @@ internal sealed class FujiCameraSdkAdapter : IGenericCameraSDK, IDisposable
         captureCts?.Cancel();
         try
         {
-            _camera.StopExposureAsync().GetAwaiter().GetResult();
-        }
-        catch (Exception ex)
-        {
-            _diagnostics.RecordEvent("Adapter", $"StopExposure failed during cancel: {ex.Message}");
-        }
-
-        try
-        {
             captureTask.GetAwaiter().GetResult();
         }
         catch (OperationCanceledException)
