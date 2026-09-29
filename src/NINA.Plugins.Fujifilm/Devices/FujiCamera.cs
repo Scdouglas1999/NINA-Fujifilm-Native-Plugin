@@ -1834,7 +1834,8 @@ public sealed class FujiCamera : IAsyncDisposable, INotifyPropertyChanged
             return;
         }
 
-        IssueReleaseCommand(FujifilmSdkWrapper.XSDK_RELEASE_SHOOT_S1OFF, "Timed exposure trigger");
+        await FujifilmTimedRelease.TriggerAsync(IssueReleaseCommand, cancellationToken,
+            message => _diagnostics.RecordEvent("Camera", message)).ConfigureAwait(false);
         var extra = TimeSpan.FromSeconds(Math.Max(1.0, Math.Min(5.0, exposureSeconds * 0.2)));
         await Task.Delay(TimeSpan.FromSeconds(exposureSeconds) + extra, cancellationToken).ConfigureAwait(false);
     }
