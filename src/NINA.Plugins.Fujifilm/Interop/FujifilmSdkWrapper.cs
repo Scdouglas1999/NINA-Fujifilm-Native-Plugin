@@ -48,6 +48,7 @@ internal static class FujifilmSdkWrapper
     public const int XSDK_RELEASE_N_S1OFF = 0x0004;
     public const int XSDK_RELEASE_SHOOT_S1OFF = XSDK_RELEASE_SHOOT | XSDK_RELEASE_N_S1OFF;
     public const int XSDK_RELEASE_S1ON = 0x0200;
+    public const int XSDK_RELEASE_S2_S1OFF = 0x0300 | XSDK_RELEASE_N_S1OFF;
     public const int XSDK_RELEASE_BULBS2_ON = 0x0500;
     public const int XSDK_RELEASE_N_BULBS2OFF = 0x0008;
     public const int XSDK_RELEASE_N_BULBS1OFF = XSDK_RELEASE_N_BULBS2OFF | XSDK_RELEASE_N_S1OFF;
